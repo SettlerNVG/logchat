@@ -14,7 +14,6 @@ type LoginModel struct {
 	usernameInput textinput.Model
 	passwordInput textinput.Model
 	focusIndex    int
-	loading       bool
 }
 
 func NewLoginModel() LoginModel {
@@ -135,7 +134,7 @@ func (m LoginModel) View() string {
 		Padding(0, 2).
 		MarginTop(1)
 
-	buttonFocusedStyle := buttonStyle.Copy().
+	buttonFocusedStyle := buttonStyle.
 		Background(lipgloss.Color("86"))
 
 	hintStyle := lipgloss.NewStyle().

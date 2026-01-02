@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/logmessager/client/internal/config"
 	"github.com/logmessager/client/internal/crypto"
@@ -13,7 +12,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 )
 
 // Client is the main LogChat client
@@ -79,16 +77,12 @@ func (c *Client) Connect() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-
 	// TODO: Add TLS support
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	}
 
-	conn, err := grpc.DialContext(ctx, c.cfg.Server.Address, opts...)
+	conn, err := grpc.NewClient(c.cfg.Server.Address, opts...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -212,23 +206,6 @@ func (c *Client) Logout() error {
 	c.mu.Unlock()
 
 	return c.storage.DeleteCredentials()
-}
-
-// authContext returns context with authorization header
-func (c *Client) authContext() context.Context {
-	c.mu.RLock()
-	token := ""
-	if c.credentials != nil {
-		token = c.credentials.AccessToken
-	}
-	c.mu.RUnlock()
-
-	if token == "" {
-		return c.ctx
-	}
-
-	md := metadata.Pairs("authorization", "Bearer "+token)
-	return metadata.NewOutgoingContext(c.ctx, md)
 }
 
 // UpdatePresence updates online status

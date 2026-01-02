@@ -10,10 +10,9 @@ import (
 )
 
 type MainModel struct {
-	users        []client.UserInfo
-	selectedIdx  int
-	loading      bool
-	refreshTimer int
+	users       []client.UserInfo
+	selectedIdx int
+	loading     bool
 }
 
 func NewMainModel() MainModel {
@@ -111,7 +110,7 @@ func (m MainModel) View() string {
 	userStyle := lipgloss.NewStyle().
 		Padding(0, 2)
 
-	selectedStyle := userStyle.Copy().
+	selectedStyle := userStyle.
 		Background(lipgloss.Color("57")).
 		Foreground(lipgloss.Color("229"))
 

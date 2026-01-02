@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/logmessager/client/internal/crypto"
 	"github.com/rs/zerolog/log"
@@ -57,14 +56,9 @@ func (c *Client) Connect(hostAddress, sessionToken string) error {
 		return fmt.Errorf("generate ephemeral key: %w", err)
 	}
 
-	// Connect to host
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-
 	// TODO: Use TLS in production
-	conn, err := grpc.DialContext(ctx, hostAddress,
+	conn, err := grpc.NewClient(hostAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		return fmt.Errorf("connect to host: %w", err)

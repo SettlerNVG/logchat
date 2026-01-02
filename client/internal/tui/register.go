@@ -15,7 +15,6 @@ type RegisterModel struct {
 	passwordInput        textinput.Model
 	confirmPasswordInput textinput.Model
 	focusIndex           int
-	loading              bool
 }
 
 func NewRegisterModel() RegisterModel {
@@ -169,7 +168,7 @@ func (m RegisterModel) View() string {
 		Padding(0, 2).
 		MarginTop(1)
 
-	buttonFocusedStyle := buttonStyle.Copy().
+	buttonFocusedStyle := buttonStyle.
 		Background(lipgloss.Color("86"))
 
 	hintStyle := lipgloss.NewStyle().
