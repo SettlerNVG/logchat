@@ -1,12 +1,12 @@
 #!/bin/bash
 #
 # LogChat Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/logchat/main/install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/SettlerNVG/logchat/main/install.sh | bash
 #
 
 set -e
 
-REPO="YOUR_USERNAME/logchat"
+REPO="SettlerNVG/logchat"
 BINARY_NAME="logchat"
 INSTALL_DIR="/usr/local/bin"
 

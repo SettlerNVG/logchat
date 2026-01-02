@@ -149,7 +149,7 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 		hostID = request.ToUserID
 	} else {
 		// Neither can accept inbound - fail
-		s.sessionRepo.UpdateChatRequestStatus(ctx, requestID, "failed")
+		_ = s.sessionRepo.UpdateChatRequestStatus(ctx, requestID, "failed")
 		return nil, nil, ErrNoConnectionPath
 	}
 
@@ -319,6 +319,6 @@ func (s *SessionService) notifyUser(userID uuid.UUID, event SessionEvent) {
 
 func generateSessionToken() string {
 	bytes := make([]byte, 32)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }

@@ -96,9 +96,7 @@ func (i *AuthInterceptor) authenticate(ctx context.Context) (context.Context, er
 	}
 
 	token := values[0]
-	if strings.HasPrefix(token, "Bearer ") {
-		token = strings.TrimPrefix(token, "Bearer ")
-	}
+	token = strings.TrimPrefix(token, "Bearer ")
 
 	claims, err := i.authService.ValidateToken(ctx, token)
 	if err != nil {

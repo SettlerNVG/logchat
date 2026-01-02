@@ -52,7 +52,7 @@ func (r *UserRepository) Create(ctx context.Context, username, passwordHash stri
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var user User
 	err = tx.QueryRow(ctx, `

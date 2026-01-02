@@ -13,7 +13,7 @@ A secure, ephemeral terminal messenger with end-to-end encryption and peer-to-pe
 ### Quick Install (macOS/Linux)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/logchat/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/SettlerNVG/logchat/main/install.sh | bash
 ```
 
 After installation, just run:
@@ -23,12 +23,12 @@ logchat
 
 ### Manual Install
 
-Download the latest release for your platform from [Releases](https://github.com/YOUR_USERNAME/logchat/releases).
+Download the latest release for your platform from [Releases](https://github.com/SettlerNVG/logchat/releases).
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/logchat
+git clone https://github.com/SettlerNVG/logchat
 cd logchat
 make build
 ./bin/logchat
