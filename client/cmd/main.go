@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -13,12 +14,32 @@ import (
 	"github.com/logmessager/client/internal/tui"
 )
 
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
 func main() {
+	// Command line flags
+	serverAddr := flag.String("server", "", "Server address (e.g., example.com:50051)")
+	showVersion := flag.Bool("version", false, "Show version")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("LogChat %s (built %s)\n", Version, BuildTime)
+		os.Exit(0)
+	}
+
 	// Load config
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Override server address from flag
+	if *serverAddr != "" {
+		cfg.Server.Address = *serverAddr
 	}
 
 	// Setup logging

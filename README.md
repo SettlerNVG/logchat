@@ -16,14 +16,14 @@ A secure, ephemeral terminal messenger with end-to-end encryption and peer-to-pe
 curl -sSL https://raw.githubusercontent.com/SettlerNVG/logchat/main/install.sh | bash
 ```
 
-After installation, just run:
-```bash
-logchat
-```
-
 ### Manual Install
 
-Download the latest release for your platform from [Releases](https://github.com/SettlerNVG/logchat/releases).
+Download the latest release for your platform from [Releases](https://github.com/SettlerNVG/logchat/releases):
+- `logchat-darwin-arm64` — macOS Apple Silicon
+- `logchat-darwin-amd64` — macOS Intel
+- `logchat-linux-amd64` — Linux x64
+- `logchat-linux-arm64` — Linux ARM64
+- `logchat-windows-amd64.exe` — Windows
 
 ### Build from Source
 
@@ -32,6 +32,25 @@ git clone https://github.com/SettlerNVG/logchat
 cd logchat
 make build
 ./bin/logchat
+```
+
+## Usage
+
+```bash
+# Connect to default server (localhost:50051)
+logchat
+
+# Connect to specific server
+logchat -server chat.example.com:50051
+
+# Show version
+logchat -version
+```
+
+Or set server address via environment variable:
+```bash
+export CENTRAL_SERVER_ADDRESS=chat.example.com:50051
+logchat
 ```
 
 ## Features
