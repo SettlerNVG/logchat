@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package logmessager.auth.v1;
+
+option go_package = "github.com/logmessager/proto/gen;pb";
+
+// AuthService handles user authentication
+service AuthService {
+  // Register creates a new user account
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  
+  // Login authenticates user and returns JWT tokens
+  rpc Login(LoginRequest) returns (LoginResponse);
+  
+  // RefreshToken exchanges refresh token for new access token
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  
+  // Logout invalidates the refresh token
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+  bytes public_key = 3; // Curve25519 public key for E2EE
+}
+
+message RegisterResponse {
+  string user_id = 1;
+  string username = 2;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string access_token = 1;  // Short-lived JWT (15 min)
+  string refresh_token = 2; // Long-lived token (7 days)
+  int64 expires_at = 3;     // Unix timestamp
+  User user = 4;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  int64 expires_at = 2;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+}
+
+message User {
+  string id = 1;
+  string username = 2;
+  int64 created_at = 3;
+}

@@ -1,0 +1,91 @@
+version: '3.8'
+
+# Production Docker Compose
+# Usage: docker-compose -f docker/docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: logmessager-db-prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-logmessager}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-logmessager}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-logmessager}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - logmessager-internal
+    # No ports exposed - only internal access
+
+  migrate:
+    image: migrate/migrate:latest
+    container_name: logmessager-migrate-prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../server/migrations:/migrations:ro
+    command: [
+      "-path", "/migrations",
+      "-database", "postgres://${DB_USER:-logmessager}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-logmessager}?sslmode=disable",
+      "up"
+    ]
+    networks:
+      - logmessager-internal
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    container_name: logmessager-server-prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_GRPC_PORT: 50051
+      SERVER_ENV: production
+      DATABASE_URL: postgres://${DB_USER:-logmessager}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-logmessager}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ACCESS_TOKEN_DURATION: ${JWT_ACCESS_DURATION:-15m}
+      JWT_REFRESH_TOKEN_DURATION: ${JWT_REFRESH_DURATION:-168h}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+      TLS_CERT_FILE: /certs/server.crt
+      TLS_KEY_FILE: /certs/server.key
+    ports:
+      - "${GRPC_PORT:-50051}:50051"
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - logmessager-internal
+      - logmessager-external
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  logmessager-internal:
+    driver: bridge
+    internal: true
+  logmessager-external:
+    driver: bridge

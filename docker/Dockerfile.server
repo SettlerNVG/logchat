@@ -1,0 +1,37 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+# Copy go mod files
+COPY server/go.mod server/go.sum* ./server/
+COPY proto/ ./proto/
+
+# Download dependencies
+WORKDIR /app/server
+RUN go mod download
+
+# Copy source code
+COPY server/ ./
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /logmessager-server ./cmd
+
+# Final stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /logmessager-server .
+
+# Create non-root user
+RUN adduser -D -g '' appuser
+USER appuser
+
+EXPOSE 50051
+
+ENTRYPOINT ["./logmessager-server"]

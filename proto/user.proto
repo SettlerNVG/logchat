@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package logmessager.user.v1;
+
+option go_package = "github.com/logmessager/proto/gen;pb";
+
+// UserService handles user management and presence
+service UserService {
+  // GetUser returns user info by ID or username
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  
+  // GetPublicKey returns user's public key for E2EE
+  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+  
+  // UpdatePresence updates user's online status and network info
+  rpc UpdatePresence(UpdatePresenceRequest) returns (UpdatePresenceResponse);
+  
+  // ListOnlineUsers returns list of currently online users
+  rpc ListOnlineUsers(ListOnlineUsersRequest) returns (ListOnlineUsersResponse);
+  
+  // SearchUsers searches users by username prefix
+  rpc SearchUsers(SearchUsersRequest) returns (SearchUsersResponse);
+  
+  // SubscribePresence streams presence updates for specified users
+  rpc SubscribePresence(SubscribePresenceRequest) returns (stream PresenceUpdate);
+}
+
+message GetUserRequest {
+  oneof identifier {
+    string user_id = 1;
+    string username = 2;
+  }
+}
+
+message GetUserResponse {
+  UserInfo user = 1;
+}
+
+message GetPublicKeyRequest {
+  string user_id = 1;
+}
+
+message GetPublicKeyResponse {
+  bytes public_key = 1;
+  string key_type = 2; // "curve25519"
+}
+
+message UpdatePresenceRequest {
+  bool is_online = 1;
+  NetworkCapability network = 2;
+}
+
+message NetworkCapability {
+  bool can_accept_inbound = 1; // Can receive incoming connections
+  string public_address = 2;   // IP:port if available
+  NatType nat_type = 3;
+}
+
+enum NatType {
+  NAT_TYPE_UNSPECIFIED = 0;
+  NAT_TYPE_NONE = 1;        // Public IP, no NAT
+  NAT_TYPE_FULL_CONE = 2;   // Easy to traverse
+  NAT_TYPE_SYMMETRIC = 3;   // Hard to traverse
+  NAT_TYPE_RESTRICTED = 4;  // Medium difficulty
+}
+
+message UpdatePresenceResponse {
+  bool success = 1;
+}
+
+message ListOnlineUsersRequest {
+  int32 limit = 1;  // Max users to return (default 50)
+  int32 offset = 2; // Pagination offset
+}
+
+message ListOnlineUsersResponse {
+  repeated UserInfo users = 1;
+  int32 total = 2;
+}
+
+message SearchUsersRequest {
+  string query = 1; // Username prefix
+  int32 limit = 2;
+}
+
+message SearchUsersResponse {
+  repeated UserInfo users = 1;
+}
+
+message SubscribePresenceRequest {
+  repeated string user_ids = 1; // Users to watch
+}
+
+message PresenceUpdate {
+  string user_id = 1;
+  bool is_online = 2;
+  int64 timestamp = 3;
+}
+
+message UserInfo {
+  string id = 1;
+  string username = 2;
+  bool is_online = 3;
+  int64 last_seen = 4;
+}

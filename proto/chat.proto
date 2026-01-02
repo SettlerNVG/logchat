@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package logmessager.chat.v1;
+
+option go_package = "github.com/logmessager/proto/gen;pb";
+
+// ChatService runs on the HOST peer for P2P communication
+service ChatService {
+  // Handshake performs key exchange and session verification
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  
+  // Stream is bidirectional message stream (encrypted payloads)
+  rpc Stream(stream ChatMessage) returns (stream ChatMessage);
+}
+
+message HandshakeRequest {
+  string session_token = 1;       // Token from SessionService
+  bytes ephemeral_public_key = 2; // For DH key exchange
+  bytes signature = 3;            // Signed with identity key
+}
+
+message HandshakeResponse {
+  bool success = 1;
+  bytes ephemeral_public_key = 2; // Host's ephemeral key
+  bytes signature = 3;            // Signed with host's identity key
+  string error = 4;               // Error message if failed
+}
+
+message ChatMessage {
+  MessageType type = 1;
+  bytes payload = 2;    // Encrypted with session key (AES-GCM)
+  bytes nonce = 3;      // Nonce for AES-GCM
+  int64 timestamp = 4;  // Unix timestamp (milliseconds)
+  string message_id = 5; // UUID for deduplication
+}
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_TEXT = 1;
+  MESSAGE_TYPE_TYPING = 2;       // Typing indicator
+  MESSAGE_TYPE_STOP_TYPING = 3;
+  MESSAGE_TYPE_ACK = 4;          // Message received acknowledgment
+  MESSAGE_TYPE_HEARTBEAT = 5;    // Keep-alive
+  MESSAGE_TYPE_DISCONNECT = 6;   // Graceful disconnect
+}
+
+// Decrypted payload structures (for documentation, not transmitted)
+// These are serialized to bytes, encrypted, and put in ChatMessage.payload
+
+message TextPayload {
+  string text = 1;
+}
+
+message AckPayload {
+  string message_id = 1; // ID of message being acknowledged
+}
+
+message HeartbeatPayload {
+  int64 timestamp = 1;
+}

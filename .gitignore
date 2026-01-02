@@ -1,0 +1,54 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.prod
+docker/.env.prod
+
+# Generated proto (keep in repo for easier builds)
+# proto/gen/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
+
+# Keys and certificates
+*.pem
+*.key
+*.crt
+!*.example.key
+docker/certs/
+
+# Database
+postgres_data/
+
+# Build artifacts
+dist/

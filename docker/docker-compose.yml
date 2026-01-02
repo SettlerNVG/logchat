@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: logmessager-db
+    environment:
+      POSTGRES_USER: logmessager
+      POSTGRES_PASSWORD: logmessager
+      POSTGRES_DB: logmessager
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logmessager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - logmessager-network
+
+  migrate:
+    image: migrate/migrate:latest
+    container_name: logmessager-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../server/migrations:/migrations
+    command: [
+      "-path", "/migrations",
+      "-database", "postgres://logmessager:logmessager@postgres:5432/logmessager?sslmode=disable",
+      "up"
+    ]
+    networks:
+      - logmessager-network
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    container_name: logmessager-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_GRPC_PORT: 50051
+      SERVER_ENV: production
+      DATABASE_URL: postgres://logmessager:logmessager@postgres:5432/logmessager?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+    ports:
+      - "50051:50051"
+    networks:
+      - logmessager-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  logmessager-network:
+    driver: bridge

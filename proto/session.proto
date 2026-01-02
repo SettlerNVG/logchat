@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package logmessager.session.v1;
+
+option go_package = "github.com/logmessager/proto/gen;pb";
+
+// SessionService handles P2P chat session coordination
+service SessionService {
+  // RequestChat initiates a chat request to another user
+  rpc RequestChat(RequestChatRequest) returns (RequestChatResponse);
+  
+  // AcceptChat accepts incoming chat request
+  rpc AcceptChat(AcceptChatRequest) returns (AcceptChatResponse);
+  
+  // DeclineChat declines incoming chat request
+  rpc DeclineChat(DeclineChatRequest) returns (DeclineChatResponse);
+  
+  // EndSession terminates an active session
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+  
+  // GetSessionInfo returns current session details
+  rpc GetSessionInfo(GetSessionInfoRequest) returns (GetSessionInfoResponse);
+  
+  // SubscribeSessionEvents streams session-related events
+  rpc SubscribeSessionEvents(SubscribeSessionEventsRequest) returns (stream SessionEvent);
+  
+  // ReportHostReady notifies server that host is ready to accept connections
+  rpc ReportHostReady(ReportHostReadyRequest) returns (ReportHostReadyResponse);
+}
+
+message RequestChatRequest {
+  string target_user_id = 1;
+}
+
+message RequestChatResponse {
+  string request_id = 1;
+  RequestStatus status = 2;
+  string message = 3; // Error message if failed
+}
+
+enum RequestStatus {
+  REQUEST_STATUS_UNSPECIFIED = 0;
+  REQUEST_STATUS_PENDING = 1;     // Waiting for target to accept
+  REQUEST_STATUS_FAILED = 2;      // Target offline or unavailable
+}
+
+message AcceptChatRequest {
+  string request_id = 1;
+}
+
+message AcceptChatResponse {
+  SessionInfo session = 1;
+}
+
+message DeclineChatRequest {
+  string request_id = 1;
+}
+
+message DeclineChatResponse {
+  bool success = 1;
+}
+
+message EndSessionRequest {
+  string session_id = 1;
+  EndReason reason = 2;
+}
+
+enum EndReason {
+  END_REASON_UNSPECIFIED = 0;
+  END_REASON_USER_LEFT = 1;
+  END_REASON_CONNECTION_LOST = 2;
+  END_REASON_ERROR = 3;
+}
+
+message EndSessionResponse {
+  bool success = 1;
+}
+
+message GetSessionInfoRequest {
+  string session_id = 1;
+}
+
+message GetSessionInfoResponse {
+  SessionInfo session = 1;
+}
+
+message SubscribeSessionEventsRequest {
+  // Empty - subscribes to all events for authenticated user
+}
+
+message SessionEvent {
+  oneof event {
+    ChatRequest chat_request = 1;
+    ChatRequestCancelled request_cancelled = 2;
+    SessionStarted session_started = 3;
+    SessionEnded session_ended = 4;
+    HostReady host_ready = 5;
+  }
+}
+
+message ChatRequest {
+  string request_id = 1;
+  string from_user_id = 2;
+  string from_username = 3;
+  int64 timestamp = 4;
+}
+
+message ChatRequestCancelled {
+  string request_id = 1;
+  string reason = 2;
+}
+
+message SessionStarted {
+  SessionInfo session = 1;
+}
+
+message SessionEnded {
+  string session_id = 1;
+  EndReason reason = 2;
+}
+
+message HostReady {
+  string session_id = 1;
+  string host_address = 2;
+}
+
+message ReportHostReadyRequest {
+  string session_id = 1;
+  string listen_address = 2; // IP:port where host is listening
+}
+
+message ReportHostReadyResponse {
+  bool success = 1;
+}
+
+message SessionInfo {
+  string session_id = 1;
+  string initiator_id = 2;
+  string responder_id = 3;
+  string host_user_id = 4;
+  string host_address = 5;       // Where to connect
+  ConnectionType connection_type = 6;
+  bytes peer_public_key = 7;     // Other user's public key for E2EE
+  string session_token = 8;      // One-time token for P2P auth
+  Role my_role = 9;              // Am I host or client?
+}
+
+enum ConnectionType {
+  CONNECTION_TYPE_UNSPECIFIED = 0;
+  CONNECTION_TYPE_DIRECT = 1;    // Direct P2P connection
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_HOST = 1;
+  ROLE_CLIENT = 2;
+}
