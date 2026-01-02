@@ -25,23 +25,23 @@ type KeyPair struct {
 // GenerateKeyPair creates a new Curve25519 key pair
 func GenerateKeyPair() (*KeyPair, error) {
 	var privateKey [KeySize]byte
-	var publicKey [KeySize]byte
 
 	// Generate random private key
 	if _, err := io.ReadFull(rand.Reader, privateKey[:]); err != nil {
 		return nil, err
 	}
 
-	// Clamp private key (as per Curve25519 spec)
-	privateKey[0] &= 248
-	privateKey[31] &= 127
-	privateKey[31] |= 64
+	// Derive public key using X25519 with basepoint
+	publicKey, err := curve25519.X25519(privateKey[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, err
+	}
 
-	// Derive public key
-	curve25519.ScalarBaseMult(&publicKey, &privateKey)
+	var pubKey [KeySize]byte
+	copy(pubKey[:], publicKey)
 
 	return &KeyPair{
-		PublicKey:  publicKey,
+		PublicKey:  pubKey,
 		PrivateKey: privateKey,
 	}, nil
 }
@@ -57,13 +57,12 @@ func ComputeSharedSecret(privateKey, peerPublicKey []byte) ([]byte, error) {
 		return nil, ErrInvalidKeySize
 	}
 
-	var priv, pub, shared [KeySize]byte
-	copy(priv[:], privateKey)
-	copy(pub[:], peerPublicKey)
+	shared, err := curve25519.X25519(privateKey, peerPublicKey)
+	if err != nil {
+		return nil, err
+	}
 
-	curve25519.ScalarMult(&shared, &priv, &pub)
-
-	return shared[:], nil
+	return shared, nil
 }
 
 // PublicKeyBytes returns public key as byte slice
