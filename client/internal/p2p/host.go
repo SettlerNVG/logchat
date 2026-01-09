@@ -185,7 +185,9 @@ func (h *Host) readLoop() {
 			log.Info().Msg("E2EE handshake complete - encryption established")
 			
 			// Send our public key back
-			h.sendHandshake()
+			if err := h.sendHandshake(); err != nil {
+				log.Error().Err(err).Msg("Failed to send handshake")
+			}
 			
 		case "msg":
 			h.mu.RLock()

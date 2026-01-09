@@ -70,7 +70,11 @@ func (c *Client) Connect(hostAddress, sessionToken string) error {
 	go c.readLoop()
 
 	// Initiate E2EE handshake - send our public key first
-	go c.sendHandshake()
+	go func() {
+		if err := c.sendHandshake(); err != nil {
+			log.Error().Err(err).Msg("Failed to send handshake")
+		}
+	}()
 
 	return nil
 }

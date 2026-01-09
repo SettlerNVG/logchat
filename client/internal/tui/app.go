@@ -94,19 +94,6 @@ func isAuthError(err error) bool {
 	return strings.Contains(errStr, "Unauthenticated") || strings.Contains(errStr, "invalid token") || strings.Contains(errStr, "token expired")
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *App) startP2PHost(session client.SessionInfo) tea.Cmd {
 	return func() tea.Msg {
 		log.Info().Str("session_id", session.SessionID).Msg("Starting P2P host")
