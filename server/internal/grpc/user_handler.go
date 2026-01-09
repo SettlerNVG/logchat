@@ -16,17 +16,19 @@ type UserServer struct {
 	pb.UnimplementedUserServiceServer
 	userService *service.UserService
 	userRepo    *repository.UserRepository
+	contactRepo *repository.ContactRepository
 }
 
-func NewUserServer(userService *service.UserService, userRepo *repository.UserRepository) *UserServer {
+func NewUserServer(userService *service.UserService, userRepo *repository.UserRepository, contactRepo *repository.ContactRepository) *UserServer {
 	return &UserServer{
 		userService: userService,
 		userRepo:    userRepo,
+		contactRepo: contactRepo,
 	}
 }
 
-func RegisterUserServer(s *grpc.Server, userService *service.UserService, userRepo *repository.UserRepository) {
-	pb.RegisterUserServiceServer(s, NewUserServer(userService, userRepo))
+func RegisterUserServer(s *grpc.Server, userService *service.UserService, userRepo *repository.UserRepository, contactRepo *repository.ContactRepository) {
+	pb.RegisterUserServiceServer(s, NewUserServer(userService, userRepo, contactRepo))
 }
 
 func (s *UserServer) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUserResponse, error) {
@@ -161,4 +163,112 @@ func (s *UserServer) SearchUsers(ctx context.Context, req *pb.SearchUsersRequest
 func (s *UserServer) SubscribePresence(req *pb.SubscribePresenceRequest, stream pb.UserService_SubscribePresenceServer) error {
 	// TODO: Implement presence subscription
 	return status.Error(codes.Unimplemented, "not implemented")
+}
+
+func (s *UserServer) AddContact(ctx context.Context, req *pb.AddContactRequest) (*pb.AddContactResponse, error) {
+	userID, ok := GetUserID(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	if req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username required")
+	}
+
+	// Find user by username
+	contactUser, err := s.userService.GetUserByUsername(ctx, req.Username)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		return nil, status.Error(codes.Internal, "failed to find user")
+	}
+
+	// Create contact
+	contact, err := s.contactRepo.Create(ctx, userID, contactUser.ID, req.Nickname)
+	if err != nil {
+		switch err {
+		case repository.ErrCannotAddSelf:
+			return nil, status.Error(codes.InvalidArgument, "cannot add yourself as contact")
+		case repository.ErrContactExists:
+			return nil, status.Error(codes.AlreadyExists, "contact already exists")
+		default:
+			return nil, status.Error(codes.Internal, "failed to add contact")
+		}
+	}
+
+	// Get presence info
+	presence, _ := s.userService.GetPresence(ctx, contactUser.ID)
+	isOnline := presence != nil && presence.IsOnline
+	var lastSeen int64
+	if presence != nil {
+		lastSeen = presence.LastSeen.Unix()
+	}
+
+	nickname := req.Nickname
+	if contact.Nickname.Valid {
+		nickname = contact.Nickname.String
+	}
+
+	return &pb.AddContactResponse{
+		Contact: &pb.Contact{
+			Id:       contact.ID.String(),
+			UserId:   contactUser.ID.String(),
+			Username: contactUser.Username,
+			Nickname: nickname,
+			IsOnline: isOnline,
+			LastSeen: lastSeen,
+		},
+	}, nil
+}
+
+func (s *UserServer) RemoveContact(ctx context.Context, req *pb.RemoveContactRequest) (*pb.RemoveContactResponse, error) {
+	userID, ok := GetUserID(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	contactID, err := uuid.Parse(req.ContactId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid contact id")
+	}
+
+	if err := s.contactRepo.Delete(ctx, userID, contactID); err != nil {
+		if err == repository.ErrContactNotFound {
+			return nil, status.Error(codes.NotFound, "contact not found")
+		}
+		return nil, status.Error(codes.Internal, "failed to remove contact")
+	}
+
+	return &pb.RemoveContactResponse{Success: true}, nil
+}
+
+func (s *UserServer) ListContacts(ctx context.Context, req *pb.ListContactsRequest) (*pb.ListContactsResponse, error) {
+	userID, ok := GetUserID(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	contacts, err := s.contactRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list contacts")
+	}
+
+	protoContacts := make([]*pb.Contact, len(contacts))
+	for i, c := range contacts {
+		nickname := ""
+		if c.Nickname.Valid {
+			nickname = c.Nickname.String
+		}
+		protoContacts[i] = &pb.Contact{
+			Id:       c.ID.String(),
+			UserId:   c.ContactUserID.String(),
+			Username: c.Username,
+			Nickname: nickname,
+			IsOnline: c.IsOnline,
+			LastSeen: c.LastSeen.Unix(),
+		}
+	}
+
+	return &pb.ListContactsResponse{Contacts: protoContacts}, nil
 }

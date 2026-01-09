@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	pb "github.com/logmessager/proto/gen"
+
 	"github.com/logmessager/client/internal/config"
 	"github.com/logmessager/client/internal/crypto"
 	"github.com/logmessager/client/internal/p2p"
@@ -12,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 // Client is the main LogChat client
@@ -22,6 +25,11 @@ type Client struct {
 	storage *storage.Storage
 	conn    *grpc.ClientConn
 
+	// gRPC clients
+	authClient    pb.AuthServiceClient
+	userClient    pb.UserServiceClient
+	sessionClient pb.SessionServiceClient
+
 	// Identity
 	identityKey *crypto.KeyPair
 	credentials *storage.Credentials
@@ -29,6 +37,11 @@ type Client struct {
 	// P2P
 	p2pHost   *p2p.Host
 	p2pClient *p2p.Client
+	
+	// P2P handlers (stored to apply when host/client created)
+	onMessage    func(text string)
+	onDisconnect func()
+	onConnect    func()
 
 	// State
 	isOnline bool
@@ -55,17 +68,19 @@ func New(cfg *config.Config) (*Client, error) {
 		return nil, fmt.Errorf("load keys: %w", err)
 	}
 
-	// Load credentials if exist
-	creds, _ := store.LoadCredentials()
+	// Don't load saved credentials - require fresh login each time
+	// This allows multiple clients on same machine for testing
 
-	return &Client{
+	client := &Client{
 		cfg:         cfg,
 		storage:     store,
 		identityKey: identityKey,
-		credentials: creds,
+		credentials: nil,
 		ctx:         ctx,
 		cancel:      cancel,
-	}, nil
+	}
+
+	return client, nil
 }
 
 // Connect establishes connection to central server
@@ -88,6 +103,10 @@ func (c *Client) Connect() error {
 	}
 
 	c.conn = conn
+	c.authClient = pb.NewAuthServiceClient(conn)
+	c.userClient = pb.NewUserServiceClient(conn)
+	c.sessionClient = pb.NewSessionServiceClient(conn)
+
 	log.Info().Str("address", c.cfg.Server.Address).Msg("Connected to server")
 
 	return nil
@@ -150,18 +169,16 @@ func (c *Client) Register(username, password string) error {
 		return err
 	}
 
-	// This would use generated proto client
-	// For now, showing the pattern:
-	/*
-	client := authpb.NewAuthServiceClient(c.conn)
-	resp, err := client.Register(c.ctx, &authpb.RegisterRequest{
+	resp, err := c.authClient.Register(c.ctx, &pb.RegisterRequest{
 		Username:  username,
 		Password:  password,
 		PublicKey: c.identityKey.PublicKeyBytes(),
 	})
-	*/
+	if err != nil {
+		return fmt.Errorf("register: %w", err)
+	}
 
-	log.Info().Str("username", username).Msg("Registration would happen here")
+	log.Info().Str("username", resp.Username).Str("user_id", resp.UserId).Msg("Registered successfully")
 	return nil
 }
 
@@ -171,15 +188,12 @@ func (c *Client) Login(username, password string) error {
 		return err
 	}
 
-	// This would use generated proto client
-	/*
-	client := authpb.NewAuthServiceClient(c.conn)
-	resp, err := client.Login(c.ctx, &authpb.LoginRequest{
+	resp, err := c.authClient.Login(c.ctx, &pb.LoginRequest{
 		Username: username,
 		Password: password,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("login: %w", err)
 	}
 
 	c.mu.Lock()
@@ -192,20 +206,54 @@ func (c *Client) Login(username, password string) error {
 	}
 	c.mu.Unlock()
 
-	return c.storage.SaveCredentials(c.credentials)
-	*/
+	if err := c.storage.SaveCredentials(c.credentials); err != nil {
+		log.Warn().Err(err).Msg("Failed to save credentials")
+	}
 
-	log.Info().Str("username", username).Msg("Login would happen here")
+	log.Info().Str("username", username).Msg("Logged in successfully")
+
+	// Update presence to online
+	go func() {
+		if err := c.UpdatePresence(true); err != nil {
+			log.Warn().Err(err).Msg("Failed to update presence")
+		}
+	}()
+
 	return nil
 }
 
 // Logout logs out from the server
 func (c *Client) Logout() error {
 	c.mu.Lock()
+	creds := c.credentials
 	c.credentials = nil
 	c.mu.Unlock()
 
+	// Try to logout on server if we have credentials
+	if creds != nil && creds.RefreshToken != "" && c.authClient != nil {
+		_, _ = c.authClient.Logout(c.ctx, &pb.LogoutRequest{
+			RefreshToken: creds.RefreshToken,
+		})
+	}
+
 	return c.storage.DeleteCredentials()
+}
+
+// authContext returns context with authorization header
+func (c *Client) authContext() context.Context {
+	c.mu.RLock()
+	token := ""
+	if c.credentials != nil {
+		token = c.credentials.AccessToken
+	}
+	c.mu.RUnlock()
+
+	if token == "" {
+		return c.ctx
+	}
+
+	md := metadata.Pairs("authorization", "Bearer "+token)
+	return metadata.NewOutgoingContext(c.ctx, md)
 }
 
 // UpdatePresence updates online status
@@ -217,17 +265,16 @@ func (c *Client) UpdatePresence(online bool) error {
 	// Check if we can accept inbound connections
 	canAccept, publicAddr := c.checkNetworkCapability()
 
-	// This would use generated proto client
-	/*
-	client := userpb.NewUserServiceClient(c.conn)
-	_, err := client.UpdatePresence(c.authContext(), &userpb.UpdatePresenceRequest{
+	_, err := c.userClient.UpdatePresence(c.authContext(), &pb.UpdatePresenceRequest{
 		IsOnline: online,
-		Network: &userpb.NetworkCapability{
+		Network: &pb.NetworkCapability{
 			CanAcceptInbound: canAccept,
 			PublicAddress:    publicAddr,
 		},
 	})
-	*/
+	if err != nil {
+		return fmt.Errorf("update presence: %w", err)
+	}
 
 	c.mu.Lock()
 	c.isOnline = online
@@ -262,32 +309,133 @@ func (c *Client) ListOnlineUsers() ([]UserInfo, error) {
 		return nil, fmt.Errorf("not logged in")
 	}
 
-	// This would use generated proto client
-	/*
-	client := userpb.NewUserServiceClient(c.conn)
-	resp, err := client.ListOnlineUsers(c.authContext(), &userpb.ListOnlineUsersRequest{
+	resp, err := c.userClient.ListOnlineUsers(c.authContext(), &pb.ListOnlineUsersRequest{
 		Limit: 50,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list users: %w", err)
 	}
 
-	users := make([]UserInfo, len(resp.Users))
-	for i, u := range resp.Users {
-		users[i] = UserInfo{
-			ID:       u.Id,
-			Username: u.Username,
-			IsOnline: u.IsOnline,
+	// Filter out current user
+	currentUserID := c.GetUserID()
+	users := make([]UserInfo, 0, len(resp.Users))
+	for _, u := range resp.Users {
+		if u.Id != currentUserID {
+			users = append(users, UserInfo{
+				ID:       u.Id,
+				Username: u.Username,
+				IsOnline: u.IsOnline,
+			})
 		}
 	}
 	return users, nil
-	*/
+}
 
-	// Mock data for now
-	return []UserInfo{
-		{ID: "1", Username: "alice", IsOnline: true},
-		{ID: "2", Username: "bob", IsOnline: true},
+// SearchUsers searches for users by username
+func (c *Client) SearchUsers(query string) ([]UserInfo, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	resp, err := c.userClient.SearchUsers(c.authContext(), &pb.SearchUsersRequest{
+		Query: query,
+		Limit: 20,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+
+	// Filter out current user
+	currentUserID := c.GetUserID()
+	users := make([]UserInfo, 0, len(resp.Users))
+	for _, u := range resp.Users {
+		if u.Id != currentUserID {
+			users = append(users, UserInfo{
+				ID:       u.Id,
+				Username: u.Username,
+				IsOnline: u.IsOnline,
+			})
+		}
+	}
+	return users, nil
+}
+
+// ContactInfo represents a contact
+type ContactInfo struct {
+	ID       string
+	UserID   string
+	Username string
+	Nickname string
+	IsOnline bool
+}
+
+// AddContact adds a user to contacts by username
+func (c *Client) AddContact(username, nickname string) (*ContactInfo, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	resp, err := c.userClient.AddContact(c.authContext(), &pb.AddContactRequest{
+		Username: username,
+		Nickname: nickname,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("add contact: %w", err)
+	}
+
+	return &ContactInfo{
+		ID:       resp.Contact.Id,
+		UserID:   resp.Contact.UserId,
+		Username: resp.Contact.Username,
+		Nickname: resp.Contact.Nickname,
+		IsOnline: resp.Contact.IsOnline,
 	}, nil
+}
+
+// RemoveContact removes a contact
+func (c *Client) RemoveContact(contactID string) error {
+	if !c.IsLoggedIn() {
+		return fmt.Errorf("not logged in")
+	}
+
+	_, err := c.userClient.RemoveContact(c.authContext(), &pb.RemoveContactRequest{
+		ContactId: contactID,
+	})
+	if err != nil {
+		return fmt.Errorf("remove contact: %w", err)
+	}
+
+	return nil
+}
+
+// ListContacts returns user's contact list
+func (c *Client) ListContacts() ([]ContactInfo, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	if c.userClient == nil {
+		if err := c.Connect(); err != nil {
+			return nil, fmt.Errorf("connect: %w", err)
+		}
+	}
+
+	resp, err := c.userClient.ListContacts(c.authContext(), &pb.ListContactsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list contacts: %w", err)
+	}
+
+	contacts := make([]ContactInfo, len(resp.Contacts))
+	for i, ct := range resp.Contacts {
+		contacts[i] = ContactInfo{
+			ID:       ct.Id,
+			UserID:   ct.UserId,
+			Username: ct.Username,
+			Nickname: ct.Nickname,
+			IsOnline: ct.IsOnline,
+		}
+	}
+	return contacts, nil
 }
 
 // RequestChat initiates a chat with another user
@@ -296,20 +444,136 @@ func (c *Client) RequestChat(targetUserID string) (string, error) {
 		return "", fmt.Errorf("not logged in")
 	}
 
-	// This would use generated proto client
-	/*
-	client := sessionpb.NewSessionServiceClient(c.conn)
-	resp, err := client.RequestChat(c.authContext(), &sessionpb.RequestChatRequest{
+	resp, err := c.sessionClient.RequestChat(c.authContext(), &pb.RequestChatRequest{
 		TargetUserId: targetUserID,
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("request chat: %w", err)
 	}
-	return resp.RequestId, nil
-	*/
 
-	log.Info().Str("target", targetUserID).Msg("Chat request would be sent")
-	return "mock-request-id", nil
+	log.Info().Str("target", targetUserID).Str("request_id", resp.RequestId).Msg("Chat request sent")
+	return resp.RequestId, nil
+}
+
+// AcceptChat accepts an incoming chat request
+func (c *Client) AcceptChat(requestID string) (*SessionInfo, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	resp, err := c.sessionClient.AcceptChat(c.authContext(), &pb.AcceptChatRequest{
+		RequestId: requestID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("accept chat: %w", err)
+	}
+
+	return &SessionInfo{
+		SessionID:     resp.Session.SessionId,
+		HostUserID:    resp.Session.HostUserId,
+		SessionToken:  resp.Session.SessionToken,
+		PeerPublicKey: resp.Session.PeerPublicKey,
+		PeerUsername:  resp.Session.PeerUsername,
+		IsHost:        resp.Session.MyRole == pb.Role_ROLE_HOST,
+	}, nil
+}
+
+// DeclineChat declines an incoming chat request
+func (c *Client) DeclineChat(requestID string) error {
+	if !c.IsLoggedIn() {
+		return fmt.Errorf("not logged in")
+	}
+
+	_, err := c.sessionClient.DeclineChat(c.authContext(), &pb.DeclineChatRequest{
+		RequestId: requestID,
+	})
+	if err != nil {
+		return fmt.Errorf("decline chat: %w", err)
+	}
+
+	return nil
+}
+
+// ChatRequestInfo represents an incoming chat request
+type ChatRequestInfo struct {
+	RequestID    string
+	FromUserID   string
+	FromUsername string
+}
+
+// SubscribeSessionEvents subscribes to session events and returns a channel
+func (c *Client) SubscribeSessionEvents() (<-chan interface{}, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	if c.sessionClient == nil {
+		if err := c.Connect(); err != nil {
+			return nil, fmt.Errorf("connect: %w", err)
+		}
+	}
+
+	stream, err := c.sessionClient.SubscribeSessionEvents(c.authContext(), &pb.SubscribeSessionEventsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("subscribe events: %w", err)
+	}
+
+	eventCh := make(chan interface{}, 10)
+
+	go func() {
+		defer close(eventCh)
+		for {
+			event, err := stream.Recv()
+			if err != nil {
+				log.Debug().Err(err).Msg("Session event stream ended")
+				return
+			}
+
+			switch e := event.Event.(type) {
+			case *pb.SessionEvent_ChatRequest:
+				log.Info().Str("request_id", e.ChatRequest.RequestId).Str("from", e.ChatRequest.FromUsername).Msg("Received chat request event")
+				eventCh <- ChatRequestInfo{
+					RequestID:    e.ChatRequest.RequestId,
+					FromUserID:   e.ChatRequest.FromUserId,
+					FromUsername: e.ChatRequest.FromUsername,
+				}
+			case *pb.SessionEvent_SessionStarted:
+				log.Info().Str("session_id", e.SessionStarted.Session.SessionId).Str("peer", e.SessionStarted.Session.PeerUsername).Msg("Received session started event")
+				eventCh <- SessionInfo{
+					SessionID:     e.SessionStarted.Session.SessionId,
+					HostUserID:    e.SessionStarted.Session.HostUserId,
+					SessionToken:  e.SessionStarted.Session.SessionToken,
+					PeerPublicKey: e.SessionStarted.Session.PeerPublicKey,
+					PeerUsername:  e.SessionStarted.Session.PeerUsername,
+					IsHost:        e.SessionStarted.Session.MyRole == pb.Role_ROLE_HOST,
+				}
+			case *pb.SessionEvent_HostReady:
+				log.Info().Str("session_id", e.HostReady.SessionId).Str("host_addr", e.HostReady.HostAddress).Msg("Received host ready event")
+				eventCh <- HostReadyInfo{
+					SessionID:   e.HostReady.SessionId,
+					HostAddress: e.HostReady.HostAddress,
+				}
+			case *pb.SessionEvent_SessionEnded:
+				log.Info().Str("session_id", e.SessionEnded.SessionId).Msg("Received session ended event")
+				eventCh <- SessionEndedInfo{
+					SessionID: e.SessionEnded.SessionId,
+				}
+			}
+		}
+	}()
+
+	return eventCh, nil
+}
+
+// HostReadyInfo represents host ready event
+type HostReadyInfo struct {
+	SessionID   string
+	HostAddress string
+}
+
+// SessionEndedInfo represents session ended event
+type SessionEndedInfo struct {
+	SessionID string
 }
 
 // UserInfo represents basic user information
@@ -341,7 +605,61 @@ func (c *Client) StartP2PHost(sessionToken string) (string, error) {
 	}
 
 	c.p2pHost = p2p.NewHost(c.cfg.P2P.PortRangeStart, c.cfg.P2P.PortRangeEnd, c.identityKey)
+	
+	// Apply stored handlers
+	if c.onMessage != nil {
+		c.p2pHost.SetMessageHandler(c.onMessage)
+	}
+	if c.onDisconnect != nil {
+		c.p2pHost.SetDisconnectHandler(c.onDisconnect)
+	}
+	if c.onConnect != nil {
+		c.p2pHost.SetConnectHandler(c.onConnect)
+	}
+	
 	return c.p2pHost.Start(sessionToken)
+}
+
+// SetMessageHandler sets callback for incoming P2P messages
+func (c *Client) SetMessageHandler(handler func(text string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.onMessage = handler
+	
+	if c.p2pHost != nil {
+		c.p2pHost.SetMessageHandler(handler)
+	}
+	if c.p2pClient != nil {
+		c.p2pClient.SetMessageHandler(handler)
+	}
+}
+
+// SetDisconnectHandler sets callback for P2P disconnection
+func (c *Client) SetDisconnectHandler(handler func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.onDisconnect = handler
+	
+	if c.p2pHost != nil {
+		c.p2pHost.SetDisconnectHandler(handler)
+	}
+	if c.p2pClient != nil {
+		c.p2pClient.SetDisconnectHandler(handler)
+	}
+}
+
+// SetConnectHandler sets callback for P2P connection (host only)
+func (c *Client) SetConnectHandler(handler func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.onConnect = handler
+	
+	if c.p2pHost != nil {
+		c.p2pHost.SetConnectHandler(handler)
+	}
 }
 
 // ConnectP2P connects to a P2P host
@@ -354,6 +672,15 @@ func (c *Client) ConnectP2P(hostAddress, sessionToken string) error {
 	}
 
 	c.p2pClient = p2p.NewClient(c.identityKey)
+	
+	// Apply stored handlers
+	if c.onMessage != nil {
+		c.p2pClient.SetMessageHandler(c.onMessage)
+	}
+	if c.onDisconnect != nil {
+		c.p2pClient.SetDisconnectHandler(c.onDisconnect)
+	}
+	
 	return c.p2pClient.Connect(hostAddress, sessionToken)
 }
 
@@ -364,12 +691,16 @@ func (c *Client) SendMessage(text string) error {
 	client := c.p2pClient
 	c.mu.RUnlock()
 
+	log.Info().Str("text", text).Bool("has_host", host != nil).Bool("has_client", client != nil).Msg("SendMessage called")
+
 	payload := []byte(text)
 
 	if host != nil {
+		log.Info().Msg("Sending via P2P host")
 		return host.SendMessage(payload)
 	}
 	if client != nil {
+		log.Info().Msg("Sending via P2P client")
 		return client.SendMessage(payload)
 	}
 
@@ -389,4 +720,52 @@ func (c *Client) EndChat() {
 		c.p2pClient.Disconnect()
 		c.p2pClient = nil
 	}
+}
+
+// EndSession ends a session on the server
+func (c *Client) EndSession(sessionID string) error {
+	if !c.IsLoggedIn() {
+		return fmt.Errorf("not logged in")
+	}
+
+	if c.sessionClient == nil {
+		if err := c.Connect(); err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+	}
+
+	_, err := c.sessionClient.EndSession(c.authContext(), &pb.EndSessionRequest{
+		SessionId: sessionID,
+		Reason:    pb.EndReason_END_REASON_USER_LEFT,
+	})
+	if err != nil {
+		return fmt.Errorf("end session: %w", err)
+	}
+
+	log.Info().Str("session_id", sessionID).Msg("Session ended on server")
+	return nil
+}
+
+// ReportHostReady reports to server that P2P host is ready
+func (c *Client) ReportHostReady(sessionID, listenAddress string) error {
+	if !c.IsLoggedIn() {
+		return fmt.Errorf("not logged in")
+	}
+
+	if c.sessionClient == nil {
+		if err := c.Connect(); err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+	}
+
+	_, err := c.sessionClient.ReportHostReady(c.authContext(), &pb.ReportHostReadyRequest{
+		SessionId:     sessionID,
+		ListenAddress: listenAddress,
+	})
+	if err != nil {
+		return fmt.Errorf("report host ready: %w", err)
+	}
+
+	log.Info().Str("session_id", sessionID).Str("address", listenAddress).Msg("Reported host ready to server")
+	return nil
 }

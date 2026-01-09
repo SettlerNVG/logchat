@@ -1222,6 +1222,7 @@ type SessionInfo struct {
 	PeerPublicKey  []byte                 `protobuf:"bytes,7,opt,name=peer_public_key,json=peerPublicKey,proto3" json:"peer_public_key,omitempty"`            // Other user's public key for E2EE
 	SessionToken   string                 `protobuf:"bytes,8,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`                 // One-time token for P2P auth
 	MyRole         Role                   `protobuf:"varint,9,opt,name=my_role,json=myRole,proto3,enum=logmessager.session.v1.Role" json:"my_role,omitempty"` // Am I host or client?
+	PeerUsername   string                 `protobuf:"bytes,10,opt,name=peer_username,json=peerUsername,proto3" json:"peer_username,omitempty"`                // Username of the peer
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1319,6 +1320,13 @@ func (x *SessionInfo) GetMyRole() Role {
 	return Role_ROLE_UNSPECIFIED
 }
 
+func (x *SessionInfo) GetPeerUsername() string {
+	if x != nil {
+		return x.PeerUsername
+	}
+	return ""
+}
+
 var File_session_proto protoreflect.FileDescriptor
 
 const file_session_proto_rawDesc = "" +
@@ -1387,7 +1395,7 @@ const file_session_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
 	"\x0elisten_address\x18\x02 \x01(\tR\rlistenAddress\"3\n" +
 	"\x17ReportHostReadyResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x8c\x03\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xb1\x03\n" +
 	"\vSessionInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
@@ -1399,7 +1407,9 @@ const file_session_proto_rawDesc = "" +
 	"\x0fconnection_type\x18\x06 \x01(\x0e2&.logmessager.session.v1.ConnectionTypeR\x0econnectionType\x12&\n" +
 	"\x0fpeer_public_key\x18\a \x01(\fR\rpeerPublicKey\x12#\n" +
 	"\rsession_token\x18\b \x01(\tR\fsessionToken\x125\n" +
-	"\amy_role\x18\t \x01(\x0e2\x1c.logmessager.session.v1.RoleR\x06myRole*f\n" +
+	"\amy_role\x18\t \x01(\x0e2\x1c.logmessager.session.v1.RoleR\x06myRole\x12#\n" +
+	"\rpeer_username\x18\n" +
+	" \x01(\tR\fpeerUsername*f\n" +
 	"\rRequestStatus\x12\x1e\n" +
 	"\x1aREQUEST_STATUS_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16REQUEST_STATUS_PENDING\x10\x01\x12\x19\n" +

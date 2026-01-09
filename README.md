@@ -1,255 +1,65 @@
 # LogChat
 
-A secure, ephemeral terminal messenger with end-to-end encryption and peer-to-peer communication.
+Secure P2P terminal messenger with end-to-end encryption.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  "Messages that exist only in the moment"                   │
-└─────────────────────────────────────────────────────────────┘
-```
+Messages exist only in RAM during chat session — nothing is stored on servers or disk.
 
-## Installation
+## Features
 
-### Quick Install (macOS/Linux)
+- **End-to-End Encryption** — Curve25519 + AES-256-GCM
+- **Peer-to-Peer** — Direct connection between users
+- **No Message Storage** — Messages only in RAM, destroyed when chat ends
+- **Terminal UI** — Clean TUI interface
+
+## Tech Stack
+
+- **Go 1.22+**
+- **gRPC** — Server communication
+- **Protocol Buffers** — Message serialization
+- **Bubbletea** — Terminal UI framework
+- **PostgreSQL** — User data only (no messages)
+- **Docker** — Server deployment
+
+## Install
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/SettlerNVG/logchat/main/install.sh | bash
 ```
 
-### Manual Install
-
-Download the latest release for your platform from [Releases](https://github.com/SettlerNVG/logchat/releases):
-- `logchat-darwin-arm64` — macOS Apple Silicon
-- `logchat-darwin-amd64` — macOS Intel
-- `logchat-linux-amd64` — Linux x64
-- `logchat-linux-arm64` — Linux ARM64
-- `logchat-windows-amd64.exe` — Windows
-
-### Build from Source
-
-```bash
-git clone https://github.com/SettlerNVG/logchat
-cd logchat
-make build
-./bin/logchat
-```
+Or download from [Releases](https://github.com/SettlerNVG/logchat/releases).
 
 ## Usage
 
 ```bash
-# Connect to default server (localhost:50051)
-logchat
-
-# Connect to specific server
-logchat -server chat.example.com:50051
-
-# Show version
-logchat -version
-```
-
-Or set server address via environment variable:
-```bash
-export CENTRAL_SERVER_ADDRESS=chat.example.com:50051
 logchat
 ```
-
-## Features
-
-- **End-to-End Encryption** — Curve25519 key exchange + AES-256-GCM
-- **No Message Storage** — Messages exist only in RAM during chat
-- **Peer-to-Peer** — Direct connection between users, server only coordinates
-- **Dynamic Host Selection** — Automatic role assignment based on network capability
-- **Terminal UI** — Clean TUI interface using Bubbletea
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     CENTRAL SERVER                          │
-│         (Auth, Users, Session Coordination)                 │
-│                  ❌ NO MESSAGE STORAGE                       │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                    Coordination
-                          │
-     ┌────────────────────┴────────────────────┐
-     │                                         │
-┌────▼─────┐                             ┌─────▼────┐
-│ Client A │◄═══════ P2P Stream ════════►│ Client B │
-│  [HOST]  │      (E2EE Messages)        │ [CLIENT] │
-└──────────┘                             └──────────┘
+┌─────────────────────────────────────────┐
+│           CENTRAL SERVER                │
+│    (Auth, Contacts, Coordination)       │
+│         ❌ NO MESSAGE STORAGE           │
+└─────────────────────────────────────────┘
+                    │
+              Coordination
+                    │
+     ┌──────────────┴──────────────┐
+     │                             │
+┌────▼────┐                   ┌────▼────┐
+│ User A  │◄══════ P2P ══════►│ User B  │
+│ [HOST]  │   E2EE Messages   │[CLIENT] │
+└─────────┘                   └─────────┘
 ```
 
-## Quick Start
+## Security
 
-### Prerequisites
-
-- Go 1.22+
-- Docker & Docker Compose
-- buf (for proto generation)
-
-### Installation
-
-```bash
-# Clone repository
-git clone https://github.com/yourusername/logchat
-cd logchat
-
-# Install development tools
-make setup
-
-# Generate proto files
-make proto
-
-# Start infrastructure
-make docker-up
-
-# Build
-make build
-```
-
-### Running
-
-```bash
-# Terminal 1: Start server (if not using Docker)
-make run-server
-
-# Terminal 2: Start client
-./bin/logchat
-```
-
-## Project Structure
-
-```
-logmessager/
-├── client/                 # Terminal client
-│   ├── cmd/               # Entry point
-│   ├── internal/
-│   │   ├── config/        # Configuration
-│   │   ├── crypto/        # E2EE implementation
-│   │   ├── grpc/          # Server communication
-│   │   ├── p2p/           # P2P host/client
-│   │   └── tui/           # Terminal UI
-│   └── go.mod
-├── server/                 # Central server
-│   ├── cmd/               # Entry point
-│   ├── internal/
-│   │   ├── auth/          # JWT, password hashing
-│   │   ├── config/        # Configuration
-│   │   ├── grpc/          # gRPC handlers
-│   │   ├── repository/    # Database layer
-│   │   └── service/       # Business logic
-│   ├── migrations/        # SQL migrations
-│   └── go.mod
-├── proto/                  # Protocol Buffers
-├── docker/                 # Docker configuration
-└── docs/                   # Documentation
-```
-
-## Security Model
-
-### Encryption Layers
-
-1. **Transport**: TLS for all connections
-2. **Identity**: Curve25519 key pairs per user
-3. **Session**: Ephemeral Diffie-Hellman key exchange
-4. **Messages**: AES-256-GCM encryption
-
-### What the Server Knows
-
-- ✅ Usernames and password hashes
-- ✅ Public keys
-- ✅ Online status
-- ✅ Session metadata (who chatted with whom, when)
-- ❌ Message content
-- ❌ Session encryption keys
-
-### What Gets Destroyed
-
-- Session keys — destroyed when chat ends
-- Messages — never written to disk
-- Ephemeral keys — destroyed after key exchange
-
-## Configuration
-
-### Server (.env)
-
-```env
-SERVER_HOST=0.0.0.0
-SERVER_GRPC_PORT=50051
-DATABASE_URL=postgres://user:pass@localhost:5432/logmessager
-JWT_SECRET=your-secret-key
-```
-
-### Client (~/.logchat/.env)
-
-```env
-CENTRAL_SERVER_ADDRESS=localhost:50051
-P2P_PORT_RANGE_START=50000
-P2P_PORT_RANGE_END=50999
-```
-
-## Development
-
-```bash
-# Run tests
-make test
-
-# Lint code
-make lint
-
-# Database migrations
-make migrate-up
-make migrate-down
-
-# View logs
-make docker-logs
-```
-
-## Protocol
-
-### Chat Flow
-
-1. **Request**: User A requests chat with User B
-2. **Coordinate**: Server determines who will be host
-3. **Accept**: User B accepts the request
-4. **Connect**: Host starts P2P server, client connects
-5. **Handshake**: Ephemeral key exchange
-6. **Chat**: Encrypted bidirectional stream
-7. **End**: Keys destroyed, session metadata logged
-
-### Host Selection Logic
-
-```
-if A.can_accept_inbound:
-    A = HOST
-elif B.can_accept_inbound:
-    B = HOST
-else:
-    ERROR: "No connection path available"
-```
-
-## Roadmap
-
-- [x] Core architecture
-- [x] Proto definitions
-- [x] Proto code generation
-- [x] Server: Auth & Users
-- [x] Server: Session coordination
-- [x] Client: Crypto (E2EE)
-- [x] Client: P2P host/client
-- [x] Client: TUI framework
-- [x] Docker setup
-- [x] CI/CD workflows
-- [ ] TLS/mTLS
-- [ ] NAT traversal (TURN)
-- [ ] File transfer
-- [ ] Multi-platform builds
+- Transport: TLS (planned)
+- Key Exchange: Curve25519 ECDH
+- Encryption: AES-256-GCM
+- Session keys destroyed when chat ends
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please read the contributing guidelines first.

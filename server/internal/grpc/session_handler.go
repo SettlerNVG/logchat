@@ -63,7 +63,7 @@ func (s *SessionServer) AcceptChat(ctx context.Context, req *pb.AcceptChatReques
 
 	requestID, err := uuid.Parse(req.RequestId)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid request id")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid request id: %s", req.RequestId)
 	}
 
 	_, responderEvent, err := s.sessionService.AcceptChat(ctx, requestID, userID)
@@ -93,6 +93,7 @@ func (s *SessionServer) AcceptChat(ctx context.Context, req *pb.AcceptChatReques
 			SessionToken:   responderEvent.SessionToken,
 			ConnectionType: pb.ConnectionType_CONNECTION_TYPE_DIRECT,
 			MyRole:         role,
+			PeerUsername:   responderEvent.PeerUsername,
 		},
 	}, nil
 }
@@ -229,6 +230,7 @@ func convertSessionEvent(event service.SessionEvent) *pb.SessionEvent {
 							PeerPublicKey: payload.PeerPublicKey,
 							SessionToken:  payload.SessionToken,
 							MyRole:        role,
+							PeerUsername:  payload.PeerUsername,
 						},
 					},
 				},

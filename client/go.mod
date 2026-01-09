@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/logmessager/proto v0.0.0-00010101000000-000000000000
 	github.com/rs/zerolog v1.32.0
 	github.com/spf13/viper v1.18.2
 	golang.org/x/crypto v0.27.0

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/logmessager/client/internal/client"
+	"github.com/rs/zerolog/log"
 )
 
 type ChatMessage struct {
@@ -28,6 +29,8 @@ type ChatModel struct {
 	viewport     viewport.Model
 	width        int
 	height       int
+	sessionID    string
+	sessionToken string
 }
 
 func NewChatModel() ChatModel {
@@ -41,6 +44,14 @@ func NewChatModel() ChatModel {
 		messages: []ChatMessage{},
 		input:    input,
 	}
+}
+
+func (m ChatModel) SetSession(session client.SessionInfo) ChatModel {
+	m.peerUsername = session.PeerUsername
+	m.isHost = session.IsHost
+	m.sessionID = session.SessionID
+	m.sessionToken = session.SessionToken
+	return m
 }
 
 func (m ChatModel) Update(msg tea.Msg, c *client.Client) (ChatModel, tea.Cmd) {
@@ -68,22 +79,26 @@ func (m ChatModel) Update(msg tea.Msg, c *client.Client) (ChatModel, tea.Cmd) {
 		m.viewport.Height = msg.Height - 10
 
 	case MessageReceivedMsg:
+		log.Info().Str("from", msg.From).Str("text", msg.Text).Int("messages_before", len(m.messages)).Msg("MessageReceivedMsg in chat.Update")
 		m.messages = append(m.messages, ChatMessage{
 			From:      msg.From,
 			Text:      msg.Text,
 			Timestamp: time.Now(),
 			IsMe:      false,
 		})
+		log.Info().Int("messages_after", len(m.messages)).Msg("Messages updated")
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 
 	case MessageSentMsg:
+		log.Info().Str("text", msg.Text).Int("messages_before", len(m.messages)).Msg("MessageSentMsg in chat.Update")
 		m.messages = append(m.messages, ChatMessage{
 			From:      "You",
 			Text:      msg.Text,
 			Timestamp: time.Now(),
 			IsMe:      true,
 		})
+		log.Info().Int("messages_after", len(m.messages)).Msg("Messages updated")
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 
@@ -94,7 +109,7 @@ func (m ChatModel) Update(msg tea.Msg, c *client.Client) (ChatModel, tea.Cmd) {
 
 	case ChatDisconnectedMsg:
 		m.connected = false
-		return m, SwitchView(ViewMain)
+		// Don't switch view here - let app.go handle it
 	}
 
 	// Update input
@@ -120,6 +135,12 @@ func (m ChatModel) sendMessage(c *client.Client, text string) tea.Cmd {
 
 func (m ChatModel) endChat(c *client.Client) tea.Cmd {
 	return func() tea.Msg {
+		log.Info().Str("session_id", m.sessionID).Msg("Ending chat session")
+		if m.sessionID != "" {
+			if err := c.EndSession(m.sessionID); err != nil {
+				log.Error().Err(err).Msg("Failed to end session on server")
+			}
+		}
 		c.EndChat()
 		return ChatDisconnectedMsg{}
 	}
@@ -173,7 +194,9 @@ func (m ChatModel) View() string {
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("57")).
-		Padding(1)
+		Padding(1).
+		Width(60).
+		Height(10)
 
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
@@ -198,13 +221,21 @@ func (m ChatModel) View() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("● disconnected"))
 	}
 
+	// Debug: show message count
+	b.WriteString(fmt.Sprintf("  [%d msgs]", len(m.messages)))
+
 	b.WriteString("\n\n")
 
-	// Messages viewport
-	b.WriteString(borderStyle.Render(m.viewport.View()))
+	// Messages - render directly instead of using viewport
+	messagesContent := m.renderMessages()
+	if messagesContent == "" {
+		messagesContent = "No messages yet..."
+	}
+	b.WriteString(borderStyle.Render(messagesContent))
 	b.WriteString("\n\n")
 
 	// Input
+	b.WriteString("> ")
 	b.WriteString(m.input.View())
 	b.WriteString("\n")
 

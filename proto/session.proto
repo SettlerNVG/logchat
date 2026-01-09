@@ -143,6 +143,7 @@ message SessionInfo {
   bytes peer_public_key = 7;     // Other user's public key for E2EE
   string session_token = 8;      // One-time token for P2P auth
   Role my_role = 9;              // Am I host or client?
+  string peer_username = 10;     // Username of the peer
 }
 
 enum ConnectionType {

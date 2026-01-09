@@ -1,4 +1,24 @@
-.PHONY: proto build-server build-client run-server run-client test lint clean docker-up docker-down migrate-up migrate-down
+.PHONY: proto build-server build-client run-server run-client test lint clean docker-up docker-down migrate-up migrate-down dev restart reset
+
+# Quick development start
+dev:
+	@echo "Starting development environment..."
+	@docker-compose -f docker/docker-compose.yml up -d
+	@echo "Building client..."
+	@cd client && go build -o ../bin/logchat ./cmd
+	@echo "Ready! Run: ./bin/logchat"
+
+# Restart with clean sessions
+restart:
+	@./scripts/dev-restart.sh
+
+# Full reset (rebuild server too)
+reset:
+	@echo "🔄 Full reset..."
+	@docker-compose -f docker/docker-compose.yml down
+	@docker-compose -f docker/docker-compose.yml up -d --build
+	@sleep 3
+	@./scripts/dev-restart.sh
 
 # Proto generation
 proto:
@@ -83,6 +103,9 @@ setup:
 # Help
 help:
 	@echo "Available targets:"
+	@echo "  dev            - Quick start: docker + build client"
+	@echo "  restart        - Clean sessions + rebuild client"
+	@echo "  reset          - Full reset: rebuild server + clean + rebuild client"
 	@echo "  proto          - Generate Go code from proto files"
 	@echo "  build          - Build server and client"
 	@echo "  run-server     - Run the central server"

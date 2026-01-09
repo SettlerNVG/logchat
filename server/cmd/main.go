@@ -49,6 +49,7 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
+	contactRepo := repository.NewContactRepository(db)
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(
@@ -73,7 +74,7 @@ func main() {
 
 	// Register services
 	grpcserver.RegisterAuthServer(grpcServer, authService)
-	grpcserver.RegisterUserServer(grpcServer, userService, userRepo)
+	grpcserver.RegisterUserServer(grpcServer, userService, userRepo, contactRepo)
 	grpcserver.RegisterSessionServer(grpcServer, sessionService)
 
 	// Enable reflection for development

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/logmessager/server/internal/repository"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -70,37 +71,46 @@ func NewSessionService(sessionRepo *repository.SessionRepository, userRepo *repo
 }
 
 func (s *SessionService) RequestChat(ctx context.Context, fromUserID, toUserID uuid.UUID) (*repository.ChatRequest, error) {
+	log.Info().Str("from", fromUserID.String()).Str("to", toUserID.String()).Msg("RequestChat called")
+
 	// Can't chat with yourself
 	if fromUserID == toUserID {
 		return nil, ErrCannotChatWithSelf
 	}
 
 	// Check if initiator already in session
-	_, err := s.sessionRepo.GetActiveSessionForUser(ctx, fromUserID)
+	existingSession, err := s.sessionRepo.GetActiveSessionForUser(ctx, fromUserID)
 	if err == nil {
+		log.Warn().Str("session_id", existingSession.ID.String()).Msg("User already in active session")
 		return nil, ErrAlreadyInSession
 	}
 
 	// Check if target is online
 	presence, err := s.userRepo.GetPresence(ctx, toUserID)
 	if err != nil {
+		log.Error().Err(err).Str("user_id", toUserID.String()).Msg("Failed to get presence")
 		return nil, err
 	}
 	if !presence.IsOnline {
+		log.Warn().Str("user_id", toUserID.String()).Msg("Target user is offline")
 		return nil, ErrUserOffline
 	}
 
 	// Check if target already in session
 	_, err = s.sessionRepo.GetActiveSessionForUser(ctx, toUserID)
 	if err == nil {
+		log.Warn().Str("user_id", toUserID.String()).Msg("Target user already in active session")
 		return nil, ErrAlreadyInSession
 	}
 
 	// Create chat request
 	request, err := s.sessionRepo.CreateChatRequest(ctx, fromUserID, toUserID)
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to create chat request")
 		return nil, err
 	}
+
+	log.Info().Str("request_id", request.ID.String()).Msg("Chat request created")
 
 	// Notify target user
 	fromUser, _ := s.userRepo.GetByID(ctx, fromUserID)
@@ -113,28 +123,38 @@ func (s *SessionService) RequestChat(ctx context.Context, fromUserID, toUserID u
 		},
 	})
 
+	log.Info().Str("request_id", request.ID.String()).Str("to_user", toUserID.String()).Msg("Notified target user")
+
 	return request, nil
 }
 
 func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, acceptingUserID uuid.UUID) (*SessionStartedEvent, *SessionStartedEvent, error) {
+	log.Info().Str("request_id", requestID.String()).Str("accepting_user", acceptingUserID.String()).Msg("AcceptChat called")
+
 	// Get request
 	request, err := s.sessionRepo.GetChatRequest(ctx, requestID)
 	if err != nil {
+		log.Error().Err(err).Str("request_id", requestID.String()).Msg("Failed to get chat request")
 		return nil, nil, ErrRequestNotFound
 	}
 
+	log.Info().Str("from_user", request.FromUserID.String()).Str("to_user", request.ToUserID.String()).Str("status", request.Status).Msg("Found chat request")
+
 	// Verify accepting user is the target
 	if request.ToUserID != acceptingUserID {
+		log.Warn().Str("expected", request.ToUserID.String()).Str("got", acceptingUserID.String()).Msg("Wrong user trying to accept")
 		return nil, nil, ErrRequestNotFound
 	}
 
 	// Check request is still pending
 	if request.Status != "pending" {
+		log.Warn().Str("status", request.Status).Msg("Request not pending")
 		return nil, nil, ErrRequestExpired
 	}
 
 	// Update request status
 	if err := s.sessionRepo.UpdateChatRequestStatus(ctx, requestID, "accepted"); err != nil {
+		log.Error().Err(err).Msg("Failed to update request status")
 		return nil, nil, err
 	}
 
@@ -143,12 +163,15 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 	responderPresence, _ := s.userRepo.GetPresence(ctx, request.ToUserID)
 
 	var hostID uuid.UUID
-	if initiatorPresence.CanAcceptInbound {
+	if initiatorPresence != nil && initiatorPresence.CanAcceptInbound {
 		hostID = request.FromUserID
-	} else if responderPresence.CanAcceptInbound {
+		log.Info().Str("host", "initiator").Msg("Initiator will be host")
+	} else if responderPresence != nil && responderPresence.CanAcceptInbound {
 		hostID = request.ToUserID
+		log.Info().Str("host", "responder").Msg("Responder will be host")
 	} else {
 		// Neither can accept inbound - fail
+		log.Warn().Msg("Neither user can accept inbound connections")
 		_ = s.sessionRepo.UpdateChatRequestStatus(ctx, requestID, "failed")
 		return nil, nil, ErrNoConnectionPath
 	}
@@ -156,8 +179,11 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 	// Create session
 	session, err := s.sessionRepo.CreateSession(ctx, request.FromUserID, request.ToUserID, &hostID)
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to create session")
 		return nil, nil, err
 	}
+
+	log.Info().Str("session_id", session.ID.String()).Str("host_id", hostID.String()).Msg("Session created")
 
 	// Generate session token
 	sessionToken := generateSessionToken()
@@ -189,7 +215,8 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 		IsHost:        hostID == request.ToUserID,
 	}
 
-	// Notify initiator
+	// Notify initiator (user A who sent the request)
+	log.Info().Str("user_id", request.FromUserID.String()).Str("peer", responder.Username).Bool("is_host", initiatorEvent.IsHost).Msg("Notifying initiator")
 	s.notifyUser(request.FromUserID, SessionEvent{
 		Type:    "session_started",
 		Payload: initiatorEvent,
@@ -290,6 +317,7 @@ func (s *SessionService) Subscribe(userID uuid.UUID) <-chan SessionEvent {
 
 	ch := make(chan SessionEvent, 10)
 	s.subscribers[userID] = ch
+	log.Info().Str("user_id", userID.String()).Int("total_subscribers", len(s.subscribers)).Msg("User subscribed to session events")
 	return ch
 }
 
@@ -300,6 +328,7 @@ func (s *SessionService) Unsubscribe(userID uuid.UUID) {
 	if ch, ok := s.subscribers[userID]; ok {
 		close(ch)
 		delete(s.subscribers, userID)
+		log.Info().Str("user_id", userID.String()).Msg("User unsubscribed from session events")
 	}
 }
 
@@ -308,12 +337,16 @@ func (s *SessionService) notifyUser(userID uuid.UUID, event SessionEvent) {
 	ch, ok := s.subscribers[userID]
 	s.mu.RUnlock()
 
-	if ok {
-		select {
-		case ch <- event:
-		default:
-			// Channel full, skip
-		}
+	if !ok {
+		log.Warn().Str("user_id", userID.String()).Str("event_type", event.Type).Msg("User not subscribed, cannot notify")
+		return
+	}
+
+	select {
+	case ch <- event:
+		log.Info().Str("user_id", userID.String()).Str("event_type", event.Type).Msg("Event sent to user")
+	default:
+		log.Warn().Str("user_id", userID.String()).Str("event_type", event.Type).Msg("Channel full, event dropped")
 	}
 }
 

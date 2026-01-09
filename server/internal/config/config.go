@@ -58,7 +58,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("SERVER_ENV", "development")
 	viper.SetDefault("DATABASE_MAX_CONNECTIONS", 25)
 	viper.SetDefault("DATABASE_MAX_IDLE_CONNECTIONS", 5)
-	viper.SetDefault("JWT_ACCESS_TOKEN_DURATION", "15m")
+	viper.SetDefault("JWT_ACCESS_TOKEN_DURATION", "24h")
 	viper.SetDefault("JWT_REFRESH_TOKEN_DURATION", "168h")
 	viper.SetDefault("TLS_ENABLED", false)
 	viper.SetDefault("LOG_LEVEL", "debug")

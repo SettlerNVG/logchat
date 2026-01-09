@@ -25,6 +25,9 @@ const (
 	UserService_ListOnlineUsers_FullMethodName   = "/logmessager.user.v1.UserService/ListOnlineUsers"
 	UserService_SearchUsers_FullMethodName       = "/logmessager.user.v1.UserService/SearchUsers"
 	UserService_SubscribePresence_FullMethodName = "/logmessager.user.v1.UserService/SubscribePresence"
+	UserService_AddContact_FullMethodName        = "/logmessager.user.v1.UserService/AddContact"
+	UserService_RemoveContact_FullMethodName     = "/logmessager.user.v1.UserService/RemoveContact"
+	UserService_ListContacts_FullMethodName      = "/logmessager.user.v1.UserService/ListContacts"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -45,6 +48,12 @@ type UserServiceClient interface {
 	SearchUsers(ctx context.Context, in *SearchUsersRequest, opts ...grpc.CallOption) (*SearchUsersResponse, error)
 	// SubscribePresence streams presence updates for specified users
 	SubscribePresence(ctx context.Context, in *SubscribePresenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PresenceUpdate], error)
+	// AddContact adds a user to contacts by username
+	AddContact(ctx context.Context, in *AddContactRequest, opts ...grpc.CallOption) (*AddContactResponse, error)
+	// RemoveContact removes a user from contacts
+	RemoveContact(ctx context.Context, in *RemoveContactRequest, opts ...grpc.CallOption) (*RemoveContactResponse, error)
+	// ListContacts returns user's contact list
+	ListContacts(ctx context.Context, in *ListContactsRequest, opts ...grpc.CallOption) (*ListContactsResponse, error)
 }
 
 type userServiceClient struct {
@@ -124,6 +133,36 @@ func (c *userServiceClient) SubscribePresence(ctx context.Context, in *Subscribe
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type UserService_SubscribePresenceClient = grpc.ServerStreamingClient[PresenceUpdate]
 
+func (c *userServiceClient) AddContact(ctx context.Context, in *AddContactRequest, opts ...grpc.CallOption) (*AddContactResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddContactResponse)
+	err := c.cc.Invoke(ctx, UserService_AddContact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) RemoveContact(ctx context.Context, in *RemoveContactRequest, opts ...grpc.CallOption) (*RemoveContactResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveContactResponse)
+	err := c.cc.Invoke(ctx, UserService_RemoveContact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) ListContacts(ctx context.Context, in *ListContactsRequest, opts ...grpc.CallOption) (*ListContactsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListContactsResponse)
+	err := c.cc.Invoke(ctx, UserService_ListContacts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService service.
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
@@ -142,6 +181,12 @@ type UserServiceServer interface {
 	SearchUsers(context.Context, *SearchUsersRequest) (*SearchUsersResponse, error)
 	// SubscribePresence streams presence updates for specified users
 	SubscribePresence(*SubscribePresenceRequest, grpc.ServerStreamingServer[PresenceUpdate]) error
+	// AddContact adds a user to contacts by username
+	AddContact(context.Context, *AddContactRequest) (*AddContactResponse, error)
+	// RemoveContact removes a user from contacts
+	RemoveContact(context.Context, *RemoveContactRequest) (*RemoveContactResponse, error)
+	// ListContacts returns user's contact list
+	ListContacts(context.Context, *ListContactsRequest) (*ListContactsResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
 
@@ -169,6 +214,15 @@ func (UnimplementedUserServiceServer) SearchUsers(context.Context, *SearchUsersR
 }
 func (UnimplementedUserServiceServer) SubscribePresence(*SubscribePresenceRequest, grpc.ServerStreamingServer[PresenceUpdate]) error {
 	return status.Error(codes.Unimplemented, "method SubscribePresence not implemented")
+}
+func (UnimplementedUserServiceServer) AddContact(context.Context, *AddContactRequest) (*AddContactResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddContact not implemented")
+}
+func (UnimplementedUserServiceServer) RemoveContact(context.Context, *RemoveContactRequest) (*RemoveContactResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveContact not implemented")
+}
+func (UnimplementedUserServiceServer) ListContacts(context.Context, *ListContactsRequest) (*ListContactsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListContacts not implemented")
 }
 func (UnimplementedUserServiceServer) mustEmbedUnimplementedUserServiceServer() {}
 func (UnimplementedUserServiceServer) testEmbeddedByValue()                     {}
@@ -292,6 +346,60 @@ func _UserService_SubscribePresence_Handler(srv interface{}, stream grpc.ServerS
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type UserService_SubscribePresenceServer = grpc.ServerStreamingServer[PresenceUpdate]
 
+func _UserService_AddContact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddContactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).AddContact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_AddContact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).AddContact(ctx, req.(*AddContactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_RemoveContact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveContactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).RemoveContact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_RemoveContact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).RemoveContact(ctx, req.(*RemoveContactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_ListContacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListContactsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ListContacts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ListContacts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ListContacts(ctx, req.(*ListContactsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserService_ServiceDesc is the grpc.ServiceDesc for UserService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -318,6 +426,18 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SearchUsers",
 			Handler:    _UserService_SearchUsers_Handler,
+		},
+		{
+			MethodName: "AddContact",
+			Handler:    _UserService_AddContact_Handler,
+		},
+		{
+			MethodName: "RemoveContact",
+			Handler:    _UserService_RemoveContact_Handler,
+		},
+		{
+			MethodName: "ListContacts",
+			Handler:    _UserService_ListContacts_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

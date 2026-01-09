@@ -1,44 +1,50 @@
 package p2p
 
 import (
-	"context"
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"sync"
+	"time"
 
 	"github.com/logmessager/client/internal/crypto"
 	"github.com/rs/zerolog/log"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client represents a P2P client that connects to a host
 type Client struct {
-	mu           sync.Mutex
-	conn         *grpc.ClientConn
-	sessionToken string
-	
-	// Crypto
-	identityKey   *crypto.KeyPair
-	ephemeralKey  *crypto.KeyPair
-	sessionCipher *crypto.SessionCipher
-	
-	// Callbacks
-	onMessage     func(msg []byte)
-	onDisconnect  func()
-	
-	// State
+	mu     sync.RWMutex
+	conn   net.Conn
+	reader *bufio.Reader
+	writer *bufio.Writer
+
+	identityKey     *crypto.KeyPair
+	ephemeralKey    *crypto.KeyPair
+	sessionCipher   *crypto.SessionCipher
+	peerPublicKey   []byte
+	encryptionReady bool
+
+	onMessage    func(text string)
+	onDisconnect func()
+
 	connected bool
-	ctx       context.Context
-	cancel    context.CancelFunc
+	stopped   bool
 }
 
 // NewClient creates a new P2P client
 func NewClient(identityKey *crypto.KeyPair) *Client {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Generate ephemeral key pair for this session
+	ephemeralKey, err := crypto.GenerateEphemeralKeyPair()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to generate ephemeral key")
+		ephemeralKey = identityKey // fallback
+	}
+	
 	return &Client{
-		identityKey: identityKey,
-		ctx:         ctx,
-		cancel:      cancel,
+		identityKey:  identityKey,
+		ephemeralKey: ephemeralKey,
 	}
 }
 
@@ -47,30 +53,122 @@ func (c *Client) Connect(hostAddress, sessionToken string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.sessionToken = sessionToken
-
-	// Generate ephemeral key for this session
-	var err error
-	c.ephemeralKey, err = crypto.GenerateEphemeralKeyPair()
-	if err != nil {
-		return fmt.Errorf("generate ephemeral key: %w", err)
-	}
-
-	// TODO: Use TLS in production
-	conn, err := grpc.NewClient(hostAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := net.DialTimeout("tcp", hostAddress, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("connect to host: %w", err)
 	}
 
 	c.conn = conn
+	c.reader = bufio.NewReader(conn)
+	c.writer = bufio.NewWriter(conn)
+	c.connected = true
+	c.stopped = false
 
-	log.Info().
-		Str("address", hostAddress).
-		Msg("Connected to P2P host")
+	log.Info().Str("address", hostAddress).Msg("Connected to P2P host")
+
+	// Start reading messages
+	go c.readLoop()
+
+	// Initiate E2EE handshake - send our public key first
+	go c.sendHandshake()
 
 	return nil
+}
+
+func (c *Client) readLoop() {
+	for {
+		c.mu.RLock()
+		reader := c.reader
+		stopped := c.stopped
+		c.mu.RUnlock()
+
+		if stopped || reader == nil {
+			return
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				log.Error().Err(err).Msg("Read error")
+			}
+			c.handleDisconnect()
+			return
+		}
+
+		var msg Message
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			log.Error().Err(err).Msg("Invalid message format")
+			continue
+		}
+
+		switch msg.Type {
+		case "handshake":
+			// Received host's public key, establish encryption
+			c.mu.Lock()
+			c.peerPublicKey = msg.PublicKey
+			
+			// Compute shared secret using ECDH
+			sharedSecret, err := crypto.ComputeSharedSecret(c.ephemeralKey.PrivateKeyBytes(), c.peerPublicKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to compute shared secret")
+				c.mu.Unlock()
+				continue
+			}
+			
+			// Create session cipher (client IS initiator - we initiated connection)
+			c.sessionCipher, err = crypto.NewSessionCipher(sharedSecret, true)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to create session cipher")
+				c.mu.Unlock()
+				continue
+			}
+			c.encryptionReady = true
+			c.mu.Unlock()
+			
+			log.Info().Msg("E2EE handshake complete - encryption established")
+			
+		case "msg":
+			c.mu.RLock()
+			cipher := c.sessionCipher
+			encReady := c.encryptionReady
+			c.mu.RUnlock()
+			
+			var plaintext string
+			if encReady && cipher != nil && len(msg.Ciphertext) > 0 {
+				// Decrypt message
+				decrypted, err := cipher.Decrypt(msg.Ciphertext, msg.Nonce)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to decrypt message")
+					continue
+				}
+				plaintext = string(decrypted)
+				log.Info().Str("decrypted", plaintext).Msg("Client decrypted message")
+			} else {
+				// Fallback to unencrypted (shouldn't happen in production)
+				plaintext = msg.Data
+				log.Warn().Msg("Received unencrypted message")
+			}
+			
+			c.mu.RLock()
+			handler := c.onMessage
+			c.mu.RUnlock()
+			if handler != nil {
+				handler(plaintext)
+			}
+		}
+	}
+}
+
+func (c *Client) handleDisconnect() {
+	c.mu.Lock()
+	c.connected = false
+	handler := c.onDisconnect
+	c.mu.Unlock()
+
+	log.Info().Msg("Disconnected from host")
+	if handler != nil {
+		handler()
+	}
 }
 
 // Disconnect closes the connection
@@ -78,29 +176,98 @@ func (c *Client) Disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.cancel()
+	c.stopped = true
+	c.connected = false
+	c.encryptionReady = false
+
+	// Destroy session cipher keys
+	if c.sessionCipher != nil {
+		c.sessionCipher.Destroy()
+		c.sessionCipher = nil
+	}
+	
+	// Clear peer public key
+	c.peerPublicKey = nil
 
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
 
-	// Destroy session cipher
-	if c.sessionCipher != nil {
-		c.sessionCipher.Destroy()
-		c.sessionCipher = nil
+	log.Info().Msg("Disconnected from P2P host, encryption keys destroyed")
+}
+
+// SendMessage sends a message to the host
+func (c *Client) SendMessage(text []byte) error {
+	c.mu.RLock()
+	writer := c.writer
+	connected := c.connected
+	cipher := c.sessionCipher
+	encReady := c.encryptionReady
+	c.mu.RUnlock()
+
+	if !connected || writer == nil {
+		return fmt.Errorf("not connected")
 	}
 
-	// Clear ephemeral key
-	c.ephemeralKey = nil
+	var msg Message
+	if encReady && cipher != nil {
+		// Encrypt message
+		ciphertext, nonce, err := cipher.Encrypt(text)
+		if err != nil {
+			return fmt.Errorf("encrypt: %w", err)
+		}
+		msg = Message{Type: "msg", Ciphertext: ciphertext, Nonce: nonce}
+		log.Info().Int("ciphertext_len", len(ciphertext)).Msg("Client sending encrypted message")
+	} else {
+		// Fallback to unencrypted (shouldn't happen)
+		msg = Message{Type: "msg", Data: string(text)}
+		log.Warn().Msg("Sending unencrypted message - encryption not ready")
+	}
+	
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
 
-	c.connected = false
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	log.Info().Msg("Disconnected from P2P host")
+	if _, err := c.writer.WriteString(string(data) + "\n"); err != nil {
+		return err
+	}
+	return c.writer.Flush()
+}
+
+// sendHandshake sends our public key to host
+func (c *Client) sendHandshake() error {
+	c.mu.RLock()
+	writer := c.writer
+	ephKey := c.ephemeralKey
+	c.mu.RUnlock()
+
+	if writer == nil || ephKey == nil {
+		return fmt.Errorf("not ready for handshake")
+	}
+
+	msg := Message{Type: "handshake", PublicKey: ephKey.PublicKeyBytes()}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, err := c.writer.WriteString(string(data) + "\n"); err != nil {
+		return err
+	}
+	log.Info().Msg("Client sent handshake with public key")
+	return c.writer.Flush()
 }
 
 // SetMessageHandler sets callback for incoming messages
-func (c *Client) SetMessageHandler(handler func(msg []byte)) {
+func (c *Client) SetMessageHandler(handler func(text string)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.onMessage = handler
@@ -113,113 +280,9 @@ func (c *Client) SetDisconnectHandler(handler func()) {
 	c.onDisconnect = handler
 }
 
-// SendMessage encrypts and sends a message
-func (c *Client) SendMessage(plaintext []byte) error {
-	c.mu.Lock()
-	cipher := c.sessionCipher
-	c.mu.Unlock()
-
-	if cipher == nil {
-		return fmt.Errorf("session not established")
-	}
-
-	ciphertext, nonce, err := cipher.Encrypt(plaintext)
-	if err != nil {
-		return err
-	}
-
-	// Send via gRPC stream
-	_ = ciphertext
-	_ = nonce
-	// Implementation depends on generated proto
-
-	return nil
-}
-
-// GetEphemeralPublicKey returns the ephemeral public key for handshake
-func (c *Client) GetEphemeralPublicKey() []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	if c.ephemeralKey == nil {
-		return nil
-	}
-	return c.ephemeralKey.PublicKeyBytes()
-}
-
-// EstablishSession completes key exchange and creates session cipher
-func (c *Client) EstablishSession(peerEphemeralKey []byte, isInitiator bool) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.ephemeralKey == nil {
-		return fmt.Errorf("ephemeral key not generated")
-	}
-
-	// Compute shared secret
-	sharedSecret, err := crypto.ComputeSharedSecret(
-		c.ephemeralKey.PrivateKeyBytes(),
-		peerEphemeralKey,
-	)
-	if err != nil {
-		return fmt.Errorf("compute shared secret: %w", err)
-	}
-
-	// Create session cipher
-	c.sessionCipher, err = crypto.NewSessionCipher(sharedSecret, isInitiator)
-	if err != nil {
-		return fmt.Errorf("create session cipher: %w", err)
-	}
-
-	// Clear shared secret from memory
-	for i := range sharedSecret {
-		sharedSecret[i] = 0
-	}
-
-	c.connected = true
-	return nil
-}
-
-// Handshake performs the cryptographic handshake with the host
-func (c *Client) Handshake(peerPublicKey []byte) error {
-	// 1. Send HandshakeRequest with ephemeral key and signature
-	// 2. Receive HandshakeResponse with host's ephemeral key
-	// 3. Verify host's signature
-	// 4. Establish session cipher
-	
-	// This would use the generated ChatService client
-	// For now, showing the pattern:
-	
-	/*
-	client := chatpb.NewChatServiceClient(c.conn)
-	
-	// Sign handshake data
-	signature := c.identityKey.SignHandshake(c.sessionToken, c.GetEphemeralPublicKey())
-	
-	resp, err := client.Handshake(c.ctx, &chatpb.HandshakeRequest{
-		SessionToken:       c.sessionToken,
-		EphemeralPublicKey: c.GetEphemeralPublicKey(),
-		Signature:          signature,
-	})
-	if err != nil {
-		return err
-	}
-	
-	// Verify host's signature
-	if !crypto.VerifyHandshake(peerPublicKey, c.sessionToken, resp.EphemeralPublicKey, resp.Signature) {
-		return fmt.Errorf("invalid host signature")
-	}
-	
-	// Establish session
-	return c.EstablishSession(resp.EphemeralPublicKey, true)
-	*/
-	
-	return nil
-}
-
 // IsConnected returns connection status
 func (c *Client) IsConnected() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.connected
 }

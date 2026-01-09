@@ -23,6 +23,15 @@ service UserService {
   
   // SubscribePresence streams presence updates for specified users
   rpc SubscribePresence(SubscribePresenceRequest) returns (stream PresenceUpdate);
+
+  // AddContact adds a user to contacts by username
+  rpc AddContact(AddContactRequest) returns (AddContactResponse);
+
+  // RemoveContact removes a user from contacts
+  rpc RemoveContact(RemoveContactRequest) returns (RemoveContactResponse);
+
+  // ListContacts returns user's contact list
+  rpc ListContacts(ListContactsRequest) returns (ListContactsResponse);
 }
 
 message GetUserRequest {
@@ -102,4 +111,38 @@ message UserInfo {
   string username = 2;
   bool is_online = 3;
   int64 last_seen = 4;
+}
+
+// Contact management messages
+message AddContactRequest {
+  string username = 1; // Username to add
+  string nickname = 2; // Optional custom nickname
+}
+
+message AddContactResponse {
+  Contact contact = 1;
+}
+
+message RemoveContactRequest {
+  string contact_id = 1;
+}
+
+message RemoveContactResponse {
+  bool success = 1;
+}
+
+message ListContactsRequest {
+}
+
+message ListContactsResponse {
+  repeated Contact contacts = 1;
+}
+
+message Contact {
+  string id = 1;
+  string user_id = 2;
+  string username = 3;
+  string nickname = 4;
+  bool is_online = 5;
+  int64 last_seen = 6;
 }
