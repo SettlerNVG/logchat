@@ -3,17 +3,24 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	pb "github.com/logmessager/proto/gen"
 
 	"github.com/logmessager/client/internal/config"
 	"github.com/logmessager/client/internal/crypto"
+	"github.com/logmessager/client/internal/nat"
 	"github.com/logmessager/client/internal/p2p"
+	"github.com/logmessager/client/internal/reconnect"
 	"github.com/logmessager/client/internal/storage"
+	tlsutil "github.com/logmessager/client/internal/tls"
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -31,8 +38,12 @@ type Client struct {
 	sessionClient pb.SessionServiceClient
 
 	// Identity
-	identityKey *crypto.KeyPair
-	credentials *storage.Credentials
+	encryptionKey *crypto.KeyPair
+	signatureKey  *crypto.SigningKeyPair
+	credentials   *storage.Credentials
+
+	// Reconnection
+	reconnectMgr *reconnect.Manager
 
 	// P2P
 	p2pHost   *p2p.Host
@@ -62,7 +73,7 @@ func New(cfg *config.Config) (*Client, error) {
 	}
 
 	// Load or create identity keys
-	identityKey, err := store.LoadOrCreateKeys()
+	encryptionKey, signatureKey, err := store.LoadOrCreateKeys()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("load keys: %w", err)
@@ -72,15 +83,49 @@ func New(cfg *config.Config) (*Client, error) {
 	// This allows multiple clients on same machine for testing
 
 	client := &Client{
-		cfg:         cfg,
-		storage:     store,
-		identityKey: identityKey,
-		credentials: nil,
-		ctx:         ctx,
-		cancel:      cancel,
+		cfg:           cfg,
+		storage:       store,
+		encryptionKey: encryptionKey,
+		signatureKey:  signatureKey,
+		credentials:   nil,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
+	// Setup reconnection manager
+	reconnectCfg := reconnect.DefaultConfig()
+	client.reconnectMgr = reconnect.NewManager(reconnectCfg, func() error {
+		return client.reconnectToServer()
+	})
+
 	return client, nil
+}
+
+// reconnectToServer attempts to reconnect to the server
+func (c *Client) reconnectToServer() error {
+	log.Info().Msg("Attempting to reconnect to server...")
+
+	// Close old connection
+	c.mu.Lock()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
+	c.mu.Unlock()
+
+	// Try to connect
+	if err := c.Connect(); err != nil {
+		return fmt.Errorf("reconnect failed: %w", err)
+	}
+
+	// Update presence if logged in
+	if c.IsLoggedIn() {
+		if err := c.UpdatePresence(true); err != nil {
+			log.Warn().Err(err).Msg("Failed to update presence after reconnect")
+		}
+	}
+
+	return nil
 }
 
 // Connect establishes connection to central server
@@ -89,15 +134,51 @@ func (c *Client) Connect() error {
 	defer c.mu.Unlock()
 
 	if c.conn != nil {
-		return nil
+		// Check if connection is still alive
+		state := c.conn.GetState()
+		if state == connectivity.Ready || state == connectivity.Idle {
+			return nil
+		}
+		// Connection is dead, close it
+		c.conn.Close()
+		c.conn = nil
 	}
 
-	// TODO: Add TLS support
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	var opts []grpc.DialOption
+
+	// Add TLS if enabled
+	if c.cfg.Server.TLS.Enabled {
+		creds, err := tlsutil.LoadClientCredentials(
+			c.cfg.Server.TLS.CAFile,
+			c.cfg.Server.TLS.ServerName,
+		)
+		if err != nil {
+			return fmt.Errorf("load TLS credentials: %w", err)
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		log.Info().
+			Str("server_name", c.cfg.Server.TLS.ServerName).
+			Msg("TLS enabled for gRPC client")
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		log.Warn().Msg("TLS disabled - insecure connection!")
 	}
 
-	conn, err := grpc.NewClient(c.cfg.Server.Address, opts...)
+	// Add keepalive parameters
+	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                10 * time.Second, // Send ping every 10s
+		Timeout:             3 * time.Second,  // Wait 3s for pong
+		PermitWithoutStream: true,             // Send pings even without active streams
+	}))
+
+	// Add connection state monitoring
+	opts = append(opts, grpc.WithBlock()) // Wait for connection to be ready
+
+	// Create connection with timeout
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, c.cfg.Server.Address, opts...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -109,7 +190,51 @@ func (c *Client) Connect() error {
 
 	log.Info().Str("address", c.cfg.Server.Address).Msg("Connected to server")
 
+	// Start monitoring connection state
+	go c.monitorConnection()
+
 	return nil
+}
+
+// monitorConnection monitors the gRPC connection state
+func (c *Client) monitorConnection() {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return
+	}
+
+	for {
+		state := conn.GetState()
+		
+		// Wait for state change
+		if !conn.WaitForStateChange(c.ctx, state) {
+			// Context cancelled
+			return
+		}
+
+		newState := conn.GetState()
+		log.Debug().
+			Str("old_state", state.String()).
+			Str("new_state", newState.String()).
+			Msg("Connection state changed")
+
+		// If connection failed, start reconnection
+		if newState == connectivity.TransientFailure || newState == connectivity.Shutdown {
+			log.Warn().Str("state", newState.String()).Msg("Connection lost, starting reconnection")
+			
+			c.mu.RLock()
+			reconnectMgr := c.reconnectMgr
+			c.mu.RUnlock()
+
+			if reconnectMgr != nil && !reconnectMgr.IsReconnecting() {
+				reconnectMgr.Start(c.ctx)
+			}
+			return
+		}
+	}
 }
 
 // Disconnect closes connection to central server
@@ -125,6 +250,11 @@ func (c *Client) Disconnect() {
 
 // Close shuts down the client
 func (c *Client) Close() {
+	// Stop reconnection manager
+	if c.reconnectMgr != nil {
+		c.reconnectMgr.Stop()
+	}
+
 	c.cancel()
 	c.Disconnect()
 
@@ -134,6 +264,55 @@ func (c *Client) Close() {
 	if c.p2pClient != nil {
 		c.p2pClient.Disconnect()
 	}
+}
+
+// Reconnect changes server address and reconnects
+func (c *Client) Reconnect(serverAddr string) error {
+	// Close existing connection
+	c.Disconnect()
+
+	// Update server address
+	c.cfg.Server.Address = serverAddr
+
+	// Auto-enable TLS for non-localhost and non-ngrok
+	if !isLocalhost(serverAddr) && !isNgrok(serverAddr) {
+		c.cfg.Server.TLS.Enabled = true
+		// Auto-detect server name
+		c.cfg.Server.TLS.ServerName = extractHostname(serverAddr)
+	} else {
+		c.cfg.Server.TLS.Enabled = false
+	}
+
+	log.Info().Str("address", serverAddr).Bool("tls", c.cfg.Server.TLS.Enabled).Msg("Reconnecting to new server")
+
+	// Connect will be called on next operation
+	return nil
+}
+
+func isLocalhost(addr string) bool {
+	return strings.HasPrefix(addr, "localhost:") ||
+		strings.HasPrefix(addr, "127.0.0.1:") ||
+		strings.HasPrefix(addr, "[::1]:")
+}
+
+func isNgrok(addr string) bool {
+	return strings.Contains(addr, "ngrok.io")
+}
+
+func extractHostname(addr string) string {
+	// Handle IPv6 addresses like [::1]:50051
+	if strings.HasPrefix(addr, "[") {
+		if idx := strings.Index(addr, "]"); idx != -1 {
+			return addr[1:idx]
+		}
+	}
+	
+	// Handle regular addresses like localhost:50051
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		return addr[:idx]
+	}
+	
+	return addr
 }
 
 // IsLoggedIn returns true if user is logged in
@@ -169,10 +348,19 @@ func (c *Client) Register(username, password string) error {
 		return err
 	}
 
+	encPubKey := c.encryptionKey.PublicKeyBytes()
+	sigPubKey := c.signatureKey.PublicKey
+	
+	log.Debug().
+		Int("enc_key_len", len(encPubKey)).
+		Int("sig_key_len", len(sigPubKey)).
+		Msg("Registering with keys")
+
 	resp, err := c.authClient.Register(c.ctx, &pb.RegisterRequest{
-		Username:  username,
-		Password:  password,
-		PublicKey: c.identityKey.PublicKeyBytes(),
+		Username:            username,
+		Password:            password,
+		EncryptionPublicKey: encPubKey,
+		SignaturePublicKey:  sigPubKey,
 	})
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -262,15 +450,22 @@ func (c *Client) UpdatePresence(online bool) error {
 		return fmt.Errorf("not logged in")
 	}
 
-	// Check if we can accept inbound connections
-	canAccept, publicAddr := c.checkNetworkCapability()
+	var networkCap *pb.NetworkCapability
+
+	if online && c.cfg.STUN.Enabled {
+		// Perform STUN discovery
+		canAccept, publicAddr, natType := c.discoverNetwork()
+		
+		networkCap = &pb.NetworkCapability{
+			CanAcceptInbound: canAccept,
+			PublicAddress:    publicAddr,
+			NatType:          natType,
+		}
+	}
 
 	_, err := c.userClient.UpdatePresence(c.authContext(), &pb.UpdatePresenceRequest{
 		IsOnline: online,
-		Network: &pb.NetworkCapability{
-			CanAcceptInbound: canAccept,
-			PublicAddress:    publicAddr,
-		},
+		Network:  networkCap,
 	})
 	if err != nil {
 		return fmt.Errorf("update presence: %w", err)
@@ -282,25 +477,60 @@ func (c *Client) UpdatePresence(online bool) error {
 
 	log.Debug().
 		Bool("online", online).
-		Bool("can_accept", canAccept).
-		Str("public_addr", publicAddr).
 		Msg("Presence updated")
 
 	return nil
 }
 
-// checkNetworkCapability tests if we can accept incoming connections
-func (c *Client) checkNetworkCapability() (bool, string) {
+// discoverNetwork performs STUN discovery to determine network capabilities
+func (c *Client) discoverNetwork() (bool, string, pb.NatType) {
+	// Try STUN discovery
+	result, err := nat.DiscoverWithFallback(c.cfg.STUN.Servers, 0)
+	if err != nil {
+		log.Warn().Err(err).Msg("STUN discovery failed, using fallback")
+		return c.checkNetworkCapabilityFallback()
+	}
+
+	log.Info().
+		Str("public_ip", result.PublicIP).
+		Int("public_port", result.PublicPort).
+		Str("nat_type", result.NATType).
+		Bool("can_accept", result.CanAccept).
+		Msg("Network discovered via STUN")
+
+	natType := convertNATType(result.NATType)
+	publicAddr := fmt.Sprintf("%s:%d", result.PublicIP, result.PublicPort)
+
+	return result.CanAccept, publicAddr, natType
+}
+
+// checkNetworkCapabilityFallback is the old method without STUN
+func (c *Client) checkNetworkCapabilityFallback() (bool, string, pb.NatType) {
 	// Try to start a temporary listener
-	host := p2p.NewHost(c.cfg.P2P.PortRangeStart, c.cfg.P2P.PortRangeEnd, c.identityKey)
+	host := p2p.NewHost(c.cfg.P2P.PortRangeStart, c.cfg.P2P.PortRangeEnd, c.encryptionKey, c.signatureKey)
 	addr, err := host.Start("test")
 	host.Stop()
 
 	if err != nil {
-		return false, ""
+		return false, "", pb.NatType_NAT_TYPE_UNSPECIFIED
 	}
 
-	return true, addr
+	return true, addr, pb.NatType_NAT_TYPE_NONE
+}
+
+func convertNATType(natType string) pb.NatType {
+	switch natType {
+	case "None":
+		return pb.NatType_NAT_TYPE_NONE
+	case "Full Cone":
+		return pb.NatType_NAT_TYPE_FULL_CONE
+	case "Symmetric":
+		return pb.NatType_NAT_TYPE_SYMMETRIC
+	case "Restricted":
+		return pb.NatType_NAT_TYPE_RESTRICTED
+	default:
+		return pb.NatType_NAT_TYPE_UNSPECIFIED
+	}
 }
 
 // ListOnlineUsers returns list of online users
@@ -469,12 +699,13 @@ func (c *Client) AcceptChat(requestID string) (*SessionInfo, error) {
 	}
 
 	return &SessionInfo{
-		SessionID:     resp.Session.SessionId,
-		HostUserID:    resp.Session.HostUserId,
-		SessionToken:  resp.Session.SessionToken,
-		PeerPublicKey: resp.Session.PeerPublicKey,
-		PeerUsername:  resp.Session.PeerUsername,
-		IsHost:        resp.Session.MyRole == pb.Role_ROLE_HOST,
+		SessionID:                resp.Session.SessionId,
+		HostUserID:               resp.Session.HostUserId,
+		SessionToken:             resp.Session.SessionToken,
+		PeerEncryptionPublicKey:  resp.Session.PeerEncryptionPublicKey,
+		PeerSignaturePublicKey:   resp.Session.PeerSignaturePublicKey,
+		PeerUsername:             resp.Session.PeerUsername,
+		IsHost:                   resp.Session.MyRole == pb.Role_ROLE_HOST,
 	}, nil
 }
 
@@ -540,12 +771,13 @@ func (c *Client) SubscribeSessionEvents() (<-chan interface{}, error) {
 			case *pb.SessionEvent_SessionStarted:
 				log.Info().Str("session_id", e.SessionStarted.Session.SessionId).Str("peer", e.SessionStarted.Session.PeerUsername).Msg("Received session started event")
 				eventCh <- SessionInfo{
-					SessionID:     e.SessionStarted.Session.SessionId,
-					HostUserID:    e.SessionStarted.Session.HostUserId,
-					SessionToken:  e.SessionStarted.Session.SessionToken,
-					PeerPublicKey: e.SessionStarted.Session.PeerPublicKey,
-					PeerUsername:  e.SessionStarted.Session.PeerUsername,
-					IsHost:        e.SessionStarted.Session.MyRole == pb.Role_ROLE_HOST,
+					SessionID:                e.SessionStarted.Session.SessionId,
+					HostUserID:               e.SessionStarted.Session.HostUserId,
+					SessionToken:             e.SessionStarted.Session.SessionToken,
+					PeerEncryptionPublicKey:  e.SessionStarted.Session.PeerEncryptionPublicKey,
+					PeerSignaturePublicKey:   e.SessionStarted.Session.PeerSignaturePublicKey,
+					PeerUsername:             e.SessionStarted.Session.PeerUsername,
+					IsHost:                   e.SessionStarted.Session.MyRole == pb.Role_ROLE_HOST,
 				}
 			case *pb.SessionEvent_HostReady:
 				log.Info().Str("session_id", e.HostReady.SessionId).Str("host_addr", e.HostReady.HostAddress).Msg("Received host ready event")
@@ -585,18 +817,19 @@ type UserInfo struct {
 
 // SessionInfo represents chat session information
 type SessionInfo struct {
-	SessionID     string
-	PeerID        string
-	PeerUsername  string
-	HostUserID    string
-	HostAddress   string
-	SessionToken  string
-	PeerPublicKey []byte
-	IsHost        bool
+	SessionID                string
+	PeerID                   string
+	PeerUsername             string
+	HostUserID               string
+	HostAddress              string
+	SessionToken             string
+	PeerEncryptionPublicKey  []byte
+	PeerSignaturePublicKey   []byte
+	IsHost                   bool
 }
 
 // StartP2PHost starts P2P server for hosting a chat
-func (c *Client) StartP2PHost(sessionToken string) (string, error) {
+func (c *Client) StartP2PHost(sessionToken string, peerEncPubKey, peerSigPubKey []byte) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -604,7 +837,10 @@ func (c *Client) StartP2PHost(sessionToken string) (string, error) {
 		c.p2pHost.Stop()
 	}
 
-	c.p2pHost = p2p.NewHost(c.cfg.P2P.PortRangeStart, c.cfg.P2P.PortRangeEnd, c.identityKey)
+	c.p2pHost = p2p.NewHost(c.cfg.P2P.PortRangeStart, c.cfg.P2P.PortRangeEnd, c.encryptionKey, c.signatureKey)
+	
+	// Set peer's public keys for signature verification
+	c.p2pHost.SetPeerPublicKeys(peerEncPubKey, peerSigPubKey)
 	
 	// Apply stored handlers
 	if c.onMessage != nil {
@@ -663,7 +899,7 @@ func (c *Client) SetConnectHandler(handler func()) {
 }
 
 // ConnectP2P connects to a P2P host
-func (c *Client) ConnectP2P(hostAddress, sessionToken string) error {
+func (c *Client) ConnectP2P(hostAddress, sessionToken string, peerEncPubKey, peerSigPubKey []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -671,7 +907,7 @@ func (c *Client) ConnectP2P(hostAddress, sessionToken string) error {
 		c.p2pClient.Disconnect()
 	}
 
-	c.p2pClient = p2p.NewClient(c.identityKey)
+	c.p2pClient = p2p.NewClient(c.encryptionKey, c.signatureKey)
 	
 	// Apply stored handlers
 	if c.onMessage != nil {
@@ -681,7 +917,7 @@ func (c *Client) ConnectP2P(hostAddress, sessionToken string) error {
 		c.p2pClient.SetDisconnectHandler(c.onDisconnect)
 	}
 	
-	return c.p2pClient.Connect(hostAddress, sessionToken)
+	return c.p2pClient.Connect(hostAddress, sessionToken, peerEncPubKey, peerSigPubKey)
 }
 
 // SendMessage sends an encrypted message

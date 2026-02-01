@@ -142,7 +142,7 @@ func (m MainModel) Update(msg tea.Msg, c *client.Client) (MainModel, tea.Cmd) {
 		return m, SwitchView(ViewChat)
 
 	case ErrorMsg:
-		m.errorMsg = msg.Err.Error()
+		m.errorMsg = friendlyError(msg.Err)
 	}
 
 	return m, nil
@@ -297,7 +297,7 @@ func (m MainModel) View() string {
 		b.WriteString(inputStyle.Render(m.addInput + "█"))
 		b.WriteString("\n\n")
 		if m.errorMsg != "" {
-			b.WriteString(errorStyle.Render("Error: " + m.errorMsg))
+			b.WriteString(errorStyle.Render("✗ " + m.errorMsg))
 			b.WriteString("\n\n")
 		}
 		b.WriteString(hintStyle.Render("Enter to add • Esc to cancel"))

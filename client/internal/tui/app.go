@@ -14,7 +14,8 @@ import (
 type View int
 
 const (
-	ViewLogin View = iota
+	ViewServerSelect View = iota
+	ViewLogin
 	ViewRegister
 	ViewMain
 	ViewChat
@@ -31,26 +32,28 @@ type App struct {
 	p2pCh   chan interface{} // Channel for P2P events
 
 	// Sub-models
-	loginModel    LoginModel
-	registerModel RegisterModel
-	mainModel     MainModel
-	chatModel     ChatModel
+	serverSelectModel ServerSelectModel
+	loginModel        LoginModel
+	registerModel     RegisterModel
+	mainModel         MainModel
+	chatModel         ChatModel
 }
 
 // NewApp creates a new TUI application
 func NewApp(c *client.Client) *App {
 	app := &App{
 		client: c,
-		view:   ViewLogin,
+		view:   ViewServerSelect, // Start with server selection
 		p2pCh:  make(chan interface{}, 10),
 	}
 
+	app.serverSelectModel = NewServerSelectModel()
 	app.loginModel = NewLoginModel()
 	app.registerModel = NewRegisterModel()
 	app.mainModel = NewMainModel()
 	app.chatModel = NewChatModel()
 
-	// If already logged in, go to main view
+	// If already logged in, skip server selection and go to main view
 	if c.IsLoggedIn() {
 		app.view = ViewMain
 		app.mainModel = app.mainModel.SetUsername(c.GetUsername())
@@ -101,7 +104,11 @@ func (a *App) startP2PHost(session client.SessionInfo) tea.Cmd {
 		// Setup P2P handlers BEFORE starting host
 		a.setupP2PHandlers(session.PeerUsername)
 		
-		addr, err := a.client.StartP2PHost(session.SessionToken)
+		addr, err := a.client.StartP2PHost(
+			session.SessionToken,
+			session.PeerEncryptionPublicKey,
+			session.PeerSignaturePublicKey,
+		)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to start P2P host")
 			return ErrorMsg{Err: err}
@@ -118,16 +125,21 @@ func (a *App) startP2PHost(session client.SessionInfo) tea.Cmd {
 	}
 }
 
-func (a *App) connectToHost(info client.HostReadyInfo, peerUsername string) tea.Cmd {
+func (a *App) connectToHost(info client.HostReadyInfo, session client.SessionInfo) tea.Cmd {
 	return func() tea.Msg {
 		log.Info().Str("host_addr", info.HostAddress).Msg("Connecting to P2P host")
-		if err := a.client.ConnectP2P(info.HostAddress, ""); err != nil {
+		if err := a.client.ConnectP2P(
+			info.HostAddress,
+			session.SessionToken,
+			session.PeerEncryptionPublicKey,
+			session.PeerSignaturePublicKey,
+		); err != nil {
 			log.Error().Err(err).Msg("Failed to connect to P2P host")
 			return ErrorMsg{Err: err}
 		}
 
 		// Setup P2P handlers after connection
-		a.setupP2PHandlers(peerUsername)
+		a.setupP2PHandlers(session.PeerUsername)
 
 		return P2PConnectedMsg{IsHost: false}
 	}
@@ -228,6 +240,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case ServerSelectedMsg:
+		// Server selected - reconnect client and go to login
+		log.Info().Str("address", msg.Address).Msg("Server selected, reconnecting")
+		return a, func() tea.Msg {
+			if err := a.client.Reconnect(msg.Address); err != nil {
+				return ErrorMsg{Err: err}
+			}
+			return SwitchViewMsg{View: ViewLogin}
+		}
+
 	case SessionEventsSubscribedMsg:
 		// Save channel and start listening for events
 		a.eventCh = msg.EventCh
@@ -278,7 +300,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HostReadyMsg:
 		// Host is ready - connect as client
 		log.Info().Str("session_id", msg.Info.SessionID).Str("host_addr", msg.Info.HostAddress).Msg("Host ready, connecting as client")
-		cmd := a.connectToHost(msg.Info, a.chatModel.peerUsername)
+		
+		// Create session info from chatModel
+		session := client.SessionInfo{
+			SessionID:                a.chatModel.sessionID,
+			SessionToken:             a.chatModel.sessionToken,
+			PeerUsername:             a.chatModel.peerUsername,
+			PeerEncryptionPublicKey:  a.chatModel.peerEncryptionPublicKey,
+			PeerSignaturePublicKey:   a.chatModel.peerSignaturePublicKey,
+		}
+		
+		cmd := a.connectToHost(msg.Info, session)
 		var cmds []tea.Cmd
 		cmds = append(cmds, cmd)
 		if a.eventCh != nil {
@@ -362,6 +394,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Delegate to current view
 	var cmd tea.Cmd
 	switch a.view {
+	case ViewServerSelect:
+		a.serverSelectModel, cmd = a.serverSelectModel.Update(msg)
 	case ViewLogin:
 		a.loginModel, cmd = a.loginModel.Update(msg, a.client)
 	case ViewRegister:
@@ -380,6 +414,8 @@ func (a *App) View() string {
 	var content string
 
 	switch a.view {
+	case ViewServerSelect:
+		content = a.serverSelectModel.View()
 	case ViewLogin:
 		content = a.loginModel.View()
 	case ViewRegister:
@@ -396,7 +432,8 @@ func (a *App) View() string {
 			Foreground(lipgloss.Color("196")).
 			Bold(true).
 			Padding(0, 1)
-		content += "\n" + errorStyle.Render("Error: "+a.err.Error())
+		// Show user-friendly error message
+		content += "\n" + errorStyle.Render("✗ "+friendlyError(a.err))
 	}
 
 	return content
