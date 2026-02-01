@@ -160,13 +160,6 @@ logchat/
 └── scripts/         # Build scripts
 ```
 
-## Documentation
-
-- [Security Features](SECURITY_FEATURES.md)
-- [NAT Traversal](docs/NAT_TRAVERSAL.md)
-- [TLS Setup](docs/TLS_SETUP.md)
-- [Signature Verification](docs/SIGNATURE_VERIFICATION.md)
-- [Reconnection](docs/RECONNECTION.md)
 
 ## Troubleshooting
 
@@ -188,16 +181,10 @@ tail -f /tmp/logchat.log
 docker-compose -f docker/docker-compose.yml logs -f server
 ```
 
-## Contributing
-
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 MIT License - see [LICENSE](LICENSE).
 
-## Links
 
-- [GitHub](https://github.com/SettlerNVG/logchat)
-- [Issues](https://github.com/SettlerNVG/logchat/issues)
 - [Releases](https://github.com/SettlerNVG/logchat/releases)
