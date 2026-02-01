@@ -21,16 +21,18 @@ type ChatMessage struct {
 }
 
 type ChatModel struct {
-	peerUsername string
-	isHost       bool
-	connected    bool
-	messages     []ChatMessage
-	input        textinput.Model
-	viewport     viewport.Model
-	width        int
-	height       int
-	sessionID    string
-	sessionToken string
+	peerUsername             string
+	isHost                   bool
+	connected                bool
+	messages                 []ChatMessage
+	input                    textinput.Model
+	viewport                 viewport.Model
+	width                    int
+	height                   int
+	sessionID                string
+	sessionToken             string
+	peerEncryptionPublicKey  []byte
+	peerSignaturePublicKey   []byte
 }
 
 func NewChatModel() ChatModel {
@@ -51,6 +53,8 @@ func (m ChatModel) SetSession(session client.SessionInfo) ChatModel {
 	m.isHost = session.IsHost
 	m.sessionID = session.SessionID
 	m.sessionToken = session.SessionToken
+	m.peerEncryptionPublicKey = session.PeerEncryptionPublicKey
+	m.peerSignaturePublicKey = session.PeerSignaturePublicKey
 	return m
 }
 

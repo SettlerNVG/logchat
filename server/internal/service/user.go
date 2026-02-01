@@ -23,10 +23,6 @@ func (s *UserService) GetUserByUsername(ctx context.Context, username string) (*
 	return s.userRepo.GetByUsername(ctx, username)
 }
 
-func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (*repository.PublicKey, error) {
-	return s.userRepo.GetPublicKey(ctx, userID)
-}
-
 func (s *UserService) UpdatePresence(ctx context.Context, userID uuid.UUID, presence *repository.UserPresence) error {
 	return s.userRepo.UpdatePresence(ctx, userID, presence)
 }

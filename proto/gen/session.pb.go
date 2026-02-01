@@ -1212,19 +1212,20 @@ func (x *ReportHostReadyResponse) GetSuccess() bool {
 }
 
 type SessionInfo struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	InitiatorId    string                 `protobuf:"bytes,2,opt,name=initiator_id,json=initiatorId,proto3" json:"initiator_id,omitempty"`
-	ResponderId    string                 `protobuf:"bytes,3,opt,name=responder_id,json=responderId,proto3" json:"responder_id,omitempty"`
-	HostUserId     string                 `protobuf:"bytes,4,opt,name=host_user_id,json=hostUserId,proto3" json:"host_user_id,omitempty"`
-	HostAddress    string                 `protobuf:"bytes,5,opt,name=host_address,json=hostAddress,proto3" json:"host_address,omitempty"` // Where to connect
-	ConnectionType ConnectionType         `protobuf:"varint,6,opt,name=connection_type,json=connectionType,proto3,enum=logmessager.session.v1.ConnectionType" json:"connection_type,omitempty"`
-	PeerPublicKey  []byte                 `protobuf:"bytes,7,opt,name=peer_public_key,json=peerPublicKey,proto3" json:"peer_public_key,omitempty"`            // Other user's public key for E2EE
-	SessionToken   string                 `protobuf:"bytes,8,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`                 // One-time token for P2P auth
-	MyRole         Role                   `protobuf:"varint,9,opt,name=my_role,json=myRole,proto3,enum=logmessager.session.v1.Role" json:"my_role,omitempty"` // Am I host or client?
-	PeerUsername   string                 `protobuf:"bytes,10,opt,name=peer_username,json=peerUsername,proto3" json:"peer_username,omitempty"`                // Username of the peer
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	SessionId               string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	InitiatorId             string                 `protobuf:"bytes,2,opt,name=initiator_id,json=initiatorId,proto3" json:"initiator_id,omitempty"`
+	ResponderId             string                 `protobuf:"bytes,3,opt,name=responder_id,json=responderId,proto3" json:"responder_id,omitempty"`
+	HostUserId              string                 `protobuf:"bytes,4,opt,name=host_user_id,json=hostUserId,proto3" json:"host_user_id,omitempty"`
+	HostAddress             string                 `protobuf:"bytes,5,opt,name=host_address,json=hostAddress,proto3" json:"host_address,omitempty"` // Where to connect
+	ConnectionType          ConnectionType         `protobuf:"varint,6,opt,name=connection_type,json=connectionType,proto3,enum=logmessager.session.v1.ConnectionType" json:"connection_type,omitempty"`
+	PeerEncryptionPublicKey []byte                 `protobuf:"bytes,7,opt,name=peer_encryption_public_key,json=peerEncryptionPublicKey,proto3" json:"peer_encryption_public_key,omitempty"` // Peer's Curve25519 key for ECDH
+	PeerSignaturePublicKey  []byte                 `protobuf:"bytes,8,opt,name=peer_signature_public_key,json=peerSignaturePublicKey,proto3" json:"peer_signature_public_key,omitempty"`    // Peer's Ed25519 key for signature verification
+	SessionToken            string                 `protobuf:"bytes,9,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`                                      // One-time token for P2P auth
+	MyRole                  Role                   `protobuf:"varint,10,opt,name=my_role,json=myRole,proto3,enum=logmessager.session.v1.Role" json:"my_role,omitempty"`                     // Am I host or client?
+	PeerUsername            string                 `protobuf:"bytes,11,opt,name=peer_username,json=peerUsername,proto3" json:"peer_username,omitempty"`                                     // Username of the peer
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *SessionInfo) Reset() {
@@ -1299,9 +1300,16 @@ func (x *SessionInfo) GetConnectionType() ConnectionType {
 	return ConnectionType_CONNECTION_TYPE_UNSPECIFIED
 }
 
-func (x *SessionInfo) GetPeerPublicKey() []byte {
+func (x *SessionInfo) GetPeerEncryptionPublicKey() []byte {
 	if x != nil {
-		return x.PeerPublicKey
+		return x.PeerEncryptionPublicKey
+	}
+	return nil
+}
+
+func (x *SessionInfo) GetPeerSignaturePublicKey() []byte {
+	if x != nil {
+		return x.PeerSignaturePublicKey
 	}
 	return nil
 }
@@ -1395,7 +1403,7 @@ const file_session_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
 	"\x0elisten_address\x18\x02 \x01(\tR\rlistenAddress\"3\n" +
 	"\x17ReportHostReadyResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xb1\x03\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x81\x04\n" +
 	"\vSessionInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
@@ -1404,12 +1412,13 @@ const file_session_proto_rawDesc = "" +
 	"\fhost_user_id\x18\x04 \x01(\tR\n" +
 	"hostUserId\x12!\n" +
 	"\fhost_address\x18\x05 \x01(\tR\vhostAddress\x12O\n" +
-	"\x0fconnection_type\x18\x06 \x01(\x0e2&.logmessager.session.v1.ConnectionTypeR\x0econnectionType\x12&\n" +
-	"\x0fpeer_public_key\x18\a \x01(\fR\rpeerPublicKey\x12#\n" +
-	"\rsession_token\x18\b \x01(\tR\fsessionToken\x125\n" +
-	"\amy_role\x18\t \x01(\x0e2\x1c.logmessager.session.v1.RoleR\x06myRole\x12#\n" +
-	"\rpeer_username\x18\n" +
-	" \x01(\tR\fpeerUsername*f\n" +
+	"\x0fconnection_type\x18\x06 \x01(\x0e2&.logmessager.session.v1.ConnectionTypeR\x0econnectionType\x12;\n" +
+	"\x1apeer_encryption_public_key\x18\a \x01(\fR\x17peerEncryptionPublicKey\x129\n" +
+	"\x19peer_signature_public_key\x18\b \x01(\fR\x16peerSignaturePublicKey\x12#\n" +
+	"\rsession_token\x18\t \x01(\tR\fsessionToken\x125\n" +
+	"\amy_role\x18\n" +
+	" \x01(\x0e2\x1c.logmessager.session.v1.RoleR\x06myRole\x12#\n" +
+	"\rpeer_username\x18\v \x01(\tR\fpeerUsername*f\n" +
 	"\rRequestStatus\x12\x1e\n" +
 	"\x1aREQUEST_STATUS_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16REQUEST_STATUS_PENDING\x10\x01\x12\x19\n" +

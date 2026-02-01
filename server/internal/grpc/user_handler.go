@@ -78,17 +78,18 @@ func (s *UserServer) GetPublicKey(ctx context.Context, req *pb.GetPublicKeyReque
 		return nil, status.Error(codes.InvalidArgument, "invalid user id")
 	}
 
-	pk, err := s.userService.GetPublicKey(ctx, userID)
+	user, err := s.userService.GetUser(ctx, userID)
 	if err != nil {
 		if err == repository.ErrUserNotFound {
 			return nil, status.Error(codes.NotFound, "user not found")
 		}
-		return nil, status.Error(codes.Internal, "failed to get public key")
+		return nil, status.Error(codes.Internal, "failed to get user")
 	}
 
 	return &pb.GetPublicKeyResponse{
-		PublicKey: pk.PublicKey,
-		KeyType:   pk.KeyType,
+		EncryptionPublicKey: user.EncryptionPublicKey,
+		SignaturePublicKey:  user.SignaturePublicKey,
+		KeyType:             "curve25519+ed25519",
 	}, nil
 }
 

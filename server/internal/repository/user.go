@@ -15,19 +15,13 @@ var (
 )
 
 type User struct {
-	ID           uuid.UUID
-	Username     string
-	PasswordHash string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-type PublicKey struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	KeyType   string
-	PublicKey []byte
-	CreatedAt time.Time
+	ID                   uuid.UUID
+	Username             string
+	PasswordHash         string
+	EncryptionPublicKey  []byte
+	SignaturePublicKey   []byte
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type UserPresence struct {
@@ -47,7 +41,7 @@ func NewUserRepository(db *DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
-func (r *UserRepository) Create(ctx context.Context, username, passwordHash string, publicKey []byte) (*User, error) {
+func (r *UserRepository) Create(ctx context.Context, username, passwordHash string, encryptionPubKey, signaturePubKey []byte) (*User, error) {
 	tx, err := r.db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -56,25 +50,16 @@ func (r *UserRepository) Create(ctx context.Context, username, passwordHash stri
 
 	var user User
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash)
-		VALUES ($1, $2)
-		RETURNING id, username, password_hash, created_at, updated_at
-	`, username, passwordHash).Scan(
-		&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
+		INSERT INTO users (username, password_hash, encryption_public_key, signature_public_key)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, username, password_hash, encryption_public_key, signature_public_key, created_at, updated_at
+	`, username, passwordHash, encryptionPubKey, signaturePubKey).Scan(
+		&user.ID, &user.Username, &user.PasswordHash, &user.EncryptionPublicKey, &user.SignaturePublicKey, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			return nil, ErrUserAlreadyExists
 		}
-		return nil, err
-	}
-
-	// Insert public key
-	_, err = tx.Exec(ctx, `
-		INSERT INTO public_keys (user_id, key_type, public_key)
-		VALUES ($1, 'curve25519', $2)
-	`, user.ID, publicKey)
-	if err != nil {
 		return nil, err
 	}
 
@@ -97,9 +82,9 @@ func (r *UserRepository) Create(ctx context.Context, username, passwordHash stri
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	var user User
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id, username, password_hash, created_at, updated_at
+		SELECT id, username, password_hash, encryption_public_key, signature_public_key, created_at, updated_at
 		FROM users WHERE id = $1
-	`, id).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	`, id).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.EncryptionPublicKey, &user.SignaturePublicKey, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -112,9 +97,9 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*User, erro
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*User, error) {
 	var user User
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id, username, password_hash, created_at, updated_at
+		SELECT id, username, password_hash, encryption_public_key, signature_public_key, created_at, updated_at
 		FROM users WHERE username = $1
-	`, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	`, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.EncryptionPublicKey, &user.SignaturePublicKey, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -122,21 +107,6 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*U
 		return nil, err
 	}
 	return &user, nil
-}
-
-func (r *UserRepository) GetPublicKey(ctx context.Context, userID uuid.UUID) (*PublicKey, error) {
-	var pk PublicKey
-	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id, user_id, key_type, public_key, created_at
-		FROM public_keys WHERE user_id = $1 AND key_type = 'curve25519'
-	`, userID).Scan(&pk.ID, &pk.UserID, &pk.KeyType, &pk.PublicKey, &pk.CreatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-	return &pk, nil
 }
 
 func (r *UserRepository) UpdatePresence(ctx context.Context, userID uuid.UUID, presence *UserPresence) error {

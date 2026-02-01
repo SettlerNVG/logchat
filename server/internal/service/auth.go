@@ -39,7 +39,7 @@ func NewAuthService(userRepo *repository.UserRepository, tokenRepo *repository.T
 	}
 }
 
-func (s *AuthService) Register(ctx context.Context, username, password string, publicKey []byte) (*repository.User, error) {
+func (s *AuthService) Register(ctx context.Context, username, password string, encryptionPubKey, signaturePubKey []byte) (*repository.User, error) {
 	// Validate username
 	if len(username) < 3 || len(username) > 50 || !isAlphanumeric(username) {
 		return nil, ErrInvalidUsername
@@ -50,6 +50,14 @@ func (s *AuthService) Register(ctx context.Context, username, password string, p
 		return nil, ErrWeakPassword
 	}
 
+	// Validate keys
+	if len(encryptionPubKey) != 32 {
+		return nil, errors.New("invalid encryption public key length (expected 32 bytes)")
+	}
+	if len(signaturePubKey) != 32 {
+		return nil, errors.New("invalid signature public key length (expected 32 bytes)")
+	}
+
 	// Hash password
 	passwordHash, err := auth.HashPassword(password)
 	if err != nil {
@@ -57,7 +65,7 @@ func (s *AuthService) Register(ctx context.Context, username, password string, p
 	}
 
 	// Create user
-	user, err := s.userRepo.Create(ctx, username, passwordHash, publicKey)
+	user, err := s.userRepo.Create(ctx, username, passwordHash, encryptionPubKey, signaturePubKey)
 	if err != nil {
 		if errors.Is(err, repository.ErrUserAlreadyExists) {
 			return nil, ErrUsernameTaken

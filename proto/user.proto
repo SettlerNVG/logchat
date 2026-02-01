@@ -50,8 +50,9 @@ message GetPublicKeyRequest {
 }
 
 message GetPublicKeyResponse {
-  bytes public_key = 1;
-  string key_type = 2; // "curve25519"
+  bytes encryption_public_key = 1; // Curve25519 for ECDH
+  bytes signature_public_key = 2;  // Ed25519 for signature verification
+  string key_type = 3;             // "curve25519+ed25519"
 }
 
 message UpdatePresenceRequest {

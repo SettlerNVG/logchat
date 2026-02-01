@@ -22,7 +22,8 @@ service AuthService {
 message RegisterRequest {
   string username = 1;
   string password = 2;
-  bytes public_key = 3; // Curve25519 public key for E2EE
+  bytes encryption_public_key = 3; // Curve25519 public key for ECDH
+  bytes signature_public_key = 4;  // Ed25519 public key for signatures
 }
 
 message RegisterResponse {

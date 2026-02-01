@@ -138,12 +138,13 @@ message SessionInfo {
   string initiator_id = 2;
   string responder_id = 3;
   string host_user_id = 4;
-  string host_address = 5;       // Where to connect
+  string host_address = 5;              // Where to connect
   ConnectionType connection_type = 6;
-  bytes peer_public_key = 7;     // Other user's public key for E2EE
-  string session_token = 8;      // One-time token for P2P auth
-  Role my_role = 9;              // Am I host or client?
-  string peer_username = 10;     // Username of the peer
+  bytes peer_encryption_public_key = 7; // Peer's Curve25519 key for ECDH
+  bytes peer_signature_public_key = 8;  // Peer's Ed25519 key for signature verification
+  string session_token = 9;             // One-time token for P2P auth
+  Role my_role = 10;                    // Am I host or client?
+  string peer_username = 11;            // Username of the peer
 }
 
 enum ConnectionType {

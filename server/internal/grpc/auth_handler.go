@@ -28,11 +28,15 @@ func (s *AuthServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb
 		return nil, status.Error(codes.InvalidArgument, "username and password required")
 	}
 
-	if len(req.PublicKey) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "public key required")
+	if len(req.EncryptionPublicKey) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "encryption public key required")
 	}
 
-	user, err := s.authService.Register(ctx, req.Username, req.Password, req.PublicKey)
+	if len(req.SignaturePublicKey) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "signature public key required")
+	}
+
+	user, err := s.authService.Register(ctx, req.Username, req.Password, req.EncryptionPublicKey, req.SignaturePublicKey)
 	if err != nil {
 		switch err {
 		case service.ErrUsernameTaken:
@@ -40,7 +44,8 @@ func (s *AuthServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb
 		case service.ErrWeakPassword, service.ErrInvalidUsername:
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		default:
-			return nil, status.Error(codes.Internal, "failed to register user")
+			// Log the actual error for debugging
+			return nil, status.Errorf(codes.Internal, "failed to register user: %v", err)
 		}
 	}
 

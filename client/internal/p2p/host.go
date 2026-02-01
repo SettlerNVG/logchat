@@ -20,6 +20,7 @@ type Message struct {
 	Ciphertext []byte `json:"ciphertext,omitempty"`
 	Nonce      []byte `json:"nonce,omitempty"`
 	PublicKey  []byte `json:"public_key,omitempty"`
+	Signature  []byte `json:"signature,omitempty"` // Signature for handshake
 }
 
 // Host represents a P2P host that accepts incoming connections
@@ -33,11 +34,13 @@ type Host struct {
 	portRange    [2]int
 	sessionToken string
 
-	identityKey    *crypto.KeyPair
-	ephemeralKey   *crypto.KeyPair
-	sessionCipher  *crypto.SessionCipher
-	peerPublicKey  []byte
-	encryptionReady bool
+	encryptionKey      *crypto.KeyPair
+	signatureKey       *crypto.SigningKeyPair
+	ephemeralKey       *crypto.KeyPair
+	sessionCipher      *crypto.SessionCipher
+	peerEncPublicKey   []byte
+	peerSigPublicKey   []byte
+	encryptionReady    bool
 
 	onMessage    func(text string)
 	onDisconnect func()
@@ -48,18 +51,19 @@ type Host struct {
 }
 
 // NewHost creates a new P2P host
-func NewHost(portRangeStart, portRangeEnd int, identityKey *crypto.KeyPair) *Host {
+func NewHost(portRangeStart, portRangeEnd int, encryptionKey *crypto.KeyPair, signatureKey *crypto.SigningKeyPair) *Host {
 	// Generate ephemeral key pair for this session
 	ephemeralKey, err := crypto.GenerateEphemeralKeyPair()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to generate ephemeral key")
-		ephemeralKey = identityKey // fallback
+		ephemeralKey = encryptionKey // fallback
 	}
 	
 	return &Host{
-		portRange:    [2]int{portRangeStart, portRangeEnd},
-		identityKey:  identityKey,
-		ephemeralKey: ephemeralKey,
+		portRange:     [2]int{portRangeStart, portRangeEnd},
+		encryptionKey: encryptionKey,
+		signatureKey:  signatureKey,
+		ephemeralKey:  ephemeralKey,
 	}
 }
 
@@ -95,6 +99,14 @@ func (h *Host) Start(sessionToken string) (string, error) {
 	go h.acceptLoop()
 
 	return publicAddr, nil
+}
+
+// SetPeerPublicKeys sets the expected peer's public keys (from server)
+func (h *Host) SetPeerPublicKeys(encPubKey, sigPubKey []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.peerEncPublicKey = encPubKey
+	h.peerSigPublicKey = sigPubKey
 }
 
 func (h *Host) acceptLoop() {
@@ -160,12 +172,33 @@ func (h *Host) readLoop() {
 
 		switch msg.Type {
 		case "handshake":
-			// Received peer's public key, establish encryption
+			// ПРОВЕРЯЕМ ПОДПИСЬ клиента
 			h.mu.Lock()
-			h.peerPublicKey = msg.PublicKey
+			peerSigPubKey := h.peerSigPublicKey
+			sessionToken := h.sessionToken
+			h.mu.Unlock()
+
+			if peerSigPubKey == nil {
+				log.Error().Msg("Peer signature public key not set")
+				h.conn.Close()
+				return
+			}
+
+			// Verify signature
+			if !crypto.VerifyHandshake(peerSigPubKey, sessionToken, msg.PublicKey, msg.Signature) {
+				log.Error().Msg("❌ SIGNATURE VERIFICATION FAILED - Possible MITM attack!")
+				h.conn.Close()
+				return
+			}
+
+			log.Info().Msg("✓ Client signature verified - authentic connection")
+
+			// Received peer's ephemeral public key, establish encryption
+			h.mu.Lock()
+			h.peerEncPublicKey = msg.PublicKey
 			
 			// Compute shared secret using ECDH
-			sharedSecret, err := crypto.ComputeSharedSecret(h.ephemeralKey.PrivateKeyBytes(), h.peerPublicKey)
+			sharedSecret, err := crypto.ComputeSharedSecret(h.ephemeralKey.PrivateKeyBytes(), h.peerEncPublicKey)
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to compute shared secret")
 				h.mu.Unlock()
@@ -184,7 +217,7 @@ func (h *Host) readLoop() {
 			
 			log.Info().Msg("E2EE handshake complete - encryption established")
 			
-			// Send our public key back
+			// Send our ephemeral public key with signature
 			if err := h.sendHandshake(); err != nil {
 				log.Error().Err(err).Msg("Failed to send handshake")
 			}
@@ -248,8 +281,9 @@ func (h *Host) Stop() {
 		h.sessionCipher = nil
 	}
 	
-	// Clear peer public key
-	h.peerPublicKey = nil
+	// Clear peer public keys
+	h.peerEncPublicKey = nil
+	h.peerSigPublicKey = nil
 
 	if h.conn != nil {
 		h.conn.Close()
@@ -305,18 +339,27 @@ func (h *Host) SendMessage(text []byte) error {
 	return h.writer.Flush()
 }
 
-// sendHandshake sends our public key to peer
+// sendHandshake sends our ephemeral public key with signature to peer
 func (h *Host) sendHandshake() error {
 	h.mu.RLock()
 	writer := h.writer
 	ephKey := h.ephemeralKey
+	sigKey := h.signatureKey
+	sessionToken := h.sessionToken
 	h.mu.RUnlock()
 
-	if writer == nil || ephKey == nil {
+	if writer == nil || ephKey == nil || sigKey == nil {
 		return fmt.Errorf("not ready for handshake")
 	}
 
-	msg := Message{Type: "handshake", PublicKey: ephKey.PublicKeyBytes()}
+	// Sign the handshake (sessionToken + ephemeral public key)
+	signature := sigKey.SignHandshake(sessionToken, ephKey.PublicKeyBytes())
+
+	msg := Message{
+		Type:      "handshake",
+		PublicKey: ephKey.PublicKeyBytes(),
+		Signature: signature,
+	}
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -328,7 +371,7 @@ func (h *Host) sendHandshake() error {
 	if _, err := h.writer.WriteString(string(data) + "\n"); err != nil {
 		return err
 	}
-	log.Info().Msg("Host sent handshake with public key")
+	log.Info().Msg("Host sent handshake with signed ephemeral public key")
 	return h.writer.Flush()
 }
 

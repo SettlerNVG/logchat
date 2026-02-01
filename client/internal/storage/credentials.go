@@ -19,8 +19,12 @@ type Credentials struct {
 
 // KeyStore stores identity keys locally
 type KeyStore struct {
-	IdentityPublicKey  []byte `json:"identity_public_key"`
-	IdentityPrivateKey []byte `json:"identity_private_key"`
+	// Encryption keys (Curve25519 for ECDH)
+	EncryptionPublicKey  []byte `json:"encryption_public_key"`
+	EncryptionPrivateKey []byte `json:"encryption_private_key"`
+	// Signature keys (Ed25519 for signatures)
+	SignaturePublicKey  []byte `json:"signature_public_key"`
+	SignaturePrivateKey []byte `json:"signature_private_key"`
 }
 
 // Storage handles local file storage for credentials and keys
@@ -119,36 +123,51 @@ func (s *Storage) LoadKeys() (*KeyStore, error) {
 }
 
 // LoadOrCreateKeys loads existing keys or creates new ones
-func (s *Storage) LoadOrCreateKeys() (*crypto.KeyPair, error) {
+func (s *Storage) LoadOrCreateKeys() (*crypto.KeyPair, *crypto.SigningKeyPair, error) {
 	keys, err := s.LoadKeys()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	if keys != nil && len(keys.IdentityPublicKey) > 0 {
-		var kp crypto.KeyPair
-		copy(kp.PublicKey[:], keys.IdentityPublicKey)
-		copy(kp.PrivateKey[:], keys.IdentityPrivateKey)
-		return &kp, nil
+	if keys != nil && len(keys.EncryptionPublicKey) > 0 && len(keys.SignaturePublicKey) > 0 {
+		// Load encryption key
+		var encKp crypto.KeyPair
+		copy(encKp.PublicKey[:], keys.EncryptionPublicKey)
+		copy(encKp.PrivateKey[:], keys.EncryptionPrivateKey)
+
+		// Load signature key
+		sigKp := &crypto.SigningKeyPair{
+			PublicKey:  keys.SignaturePublicKey,
+			PrivateKey: keys.SignaturePrivateKey,
+		}
+
+		return &encKp, sigKp, nil
 	}
 
 	// Generate new keys
-	kp, err := crypto.GenerateKeyPair()
+	encKp, err := crypto.GenerateKeyPair()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	sigKp, err := crypto.GenerateSigningKeyPair()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Save keys
 	newKeys := &KeyStore{
-		IdentityPublicKey:  kp.PublicKeyBytes(),
-		IdentityPrivateKey: kp.PrivateKeyBytes(),
+		EncryptionPublicKey:  encKp.PublicKeyBytes(),
+		EncryptionPrivateKey: encKp.PrivateKeyBytes(),
+		SignaturePublicKey:   sigKp.PublicKey,
+		SignaturePrivateKey:  sigKp.PrivateKey,
 	}
 
 	if err := s.SaveKeys(newKeys); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return kp, nil
+	return encKp, sigKp, nil
 }
 
 // HasCredentials checks if credentials exist

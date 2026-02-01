@@ -247,11 +247,12 @@ func (x *GetPublicKeyRequest) GetUserId() string {
 }
 
 type GetPublicKeyResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PublicKey     []byte                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
-	KeyType       string                 `protobuf:"bytes,2,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "curve25519"
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	EncryptionPublicKey []byte                 `protobuf:"bytes,1,opt,name=encryption_public_key,json=encryptionPublicKey,proto3" json:"encryption_public_key,omitempty"` // Curve25519 for ECDH
+	SignaturePublicKey  []byte                 `protobuf:"bytes,2,opt,name=signature_public_key,json=signaturePublicKey,proto3" json:"signature_public_key,omitempty"`    // Ed25519 for signature verification
+	KeyType             string                 `protobuf:"bytes,3,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"`                                       // "curve25519+ed25519"
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *GetPublicKeyResponse) Reset() {
@@ -284,9 +285,16 @@ func (*GetPublicKeyResponse) Descriptor() ([]byte, []int) {
 	return file_user_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *GetPublicKeyResponse) GetPublicKey() []byte {
+func (x *GetPublicKeyResponse) GetEncryptionPublicKey() []byte {
 	if x != nil {
-		return x.PublicKey
+		return x.EncryptionPublicKey
+	}
+	return nil
+}
+
+func (x *GetPublicKeyResponse) GetSignaturePublicKey() []byte {
+	if x != nil {
+		return x.SignaturePublicKey
 	}
 	return nil
 }
@@ -1189,11 +1197,11 @@ const file_user_proto_rawDesc = "" +
 	"\x0fGetUserResponse\x121\n" +
 	"\x04user\x18\x01 \x01(\v2\x1d.logmessager.user.v1.UserInfoR\x04user\".\n" +
 	"\x13GetPublicKeyRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\"P\n" +
-	"\x14GetPublicKeyResponse\x12\x1d\n" +
-	"\n" +
-	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x19\n" +
-	"\bkey_type\x18\x02 \x01(\tR\akeyType\"v\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\"\x97\x01\n" +
+	"\x14GetPublicKeyResponse\x122\n" +
+	"\x15encryption_public_key\x18\x01 \x01(\fR\x13encryptionPublicKey\x120\n" +
+	"\x14signature_public_key\x18\x02 \x01(\fR\x12signaturePublicKey\x12\x19\n" +
+	"\bkey_type\x18\x03 \x01(\tR\akeyType\"v\n" +
 	"\x15UpdatePresenceRequest\x12\x1b\n" +
 	"\tis_online\x18\x01 \x01(\bR\bisOnline\x12@\n" +
 	"\anetwork\x18\x02 \x01(\v2&.logmessager.user.v1.NetworkCapabilityR\anetwork\"\xa1\x01\n" +

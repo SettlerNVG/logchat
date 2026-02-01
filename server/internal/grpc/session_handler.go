@@ -87,13 +87,14 @@ func (s *SessionServer) AcceptChat(ctx context.Context, req *pb.AcceptChatReques
 
 	return &pb.AcceptChatResponse{
 		Session: &pb.SessionInfo{
-			SessionId:      responderEvent.SessionID.String(),
-			HostUserId:     responderEvent.HostUserID.String(),
-			PeerPublicKey:  responderEvent.PeerPublicKey,
-			SessionToken:   responderEvent.SessionToken,
-			ConnectionType: pb.ConnectionType_CONNECTION_TYPE_DIRECT,
-			MyRole:         role,
-			PeerUsername:   responderEvent.PeerUsername,
+			SessionId:               responderEvent.SessionID.String(),
+			HostUserId:              responderEvent.HostUserID.String(),
+			PeerEncryptionPublicKey: responderEvent.PeerEncryptionPublicKey,
+			PeerSignaturePublicKey:  responderEvent.PeerSignaturePublicKey,
+			SessionToken:            responderEvent.SessionToken,
+			ConnectionType:          pb.ConnectionType_CONNECTION_TYPE_DIRECT,
+			MyRole:                  role,
+			PeerUsername:            responderEvent.PeerUsername,
 		},
 	}, nil
 }
@@ -225,12 +226,13 @@ func convertSessionEvent(event service.SessionEvent) *pb.SessionEvent {
 				Event: &pb.SessionEvent_SessionStarted{
 					SessionStarted: &pb.SessionStarted{
 						Session: &pb.SessionInfo{
-							SessionId:     payload.SessionID.String(),
-							HostUserId:    payload.HostUserID.String(),
-							PeerPublicKey: payload.PeerPublicKey,
-							SessionToken:  payload.SessionToken,
-							MyRole:        role,
-							PeerUsername:  payload.PeerUsername,
+							SessionId:                 payload.SessionID.String(),
+							HostUserId:                payload.HostUserID.String(),
+							PeerEncryptionPublicKey:   payload.PeerEncryptionPublicKey,
+							PeerSignaturePublicKey:    payload.PeerSignaturePublicKey,
+							SessionToken:              payload.SessionToken,
+							MyRole:                    role,
+							PeerUsername:              payload.PeerUsername,
 						},
 					},
 				},

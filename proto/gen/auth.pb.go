@@ -22,12 +22,13 @@ const (
 )
 
 type RegisterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
-	PublicKey     []byte                 `protobuf:"bytes,3,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // Curve25519 public key for E2EE
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Username            string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password            string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	EncryptionPublicKey []byte                 `protobuf:"bytes,3,opt,name=encryption_public_key,json=encryptionPublicKey,proto3" json:"encryption_public_key,omitempty"` // Curve25519 public key for ECDH
+	SignaturePublicKey  []byte                 `protobuf:"bytes,4,opt,name=signature_public_key,json=signaturePublicKey,proto3" json:"signature_public_key,omitempty"`    // Ed25519 public key for signatures
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -74,9 +75,16 @@ func (x *RegisterRequest) GetPassword() string {
 	return ""
 }
 
-func (x *RegisterRequest) GetPublicKey() []byte {
+func (x *RegisterRequest) GetEncryptionPublicKey() []byte {
 	if x != nil {
-		return x.PublicKey
+		return x.EncryptionPublicKey
+	}
+	return nil
+}
+
+func (x *RegisterRequest) GetSignaturePublicKey() []byte {
+	if x != nil {
+		return x.SignaturePublicKey
 	}
 	return nil
 }
@@ -502,12 +510,12 @@ var File_auth_proto protoreflect.FileDescriptor
 const file_auth_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"auth.proto\x12\x13logmessager.auth.v1\"h\n" +
+	"auth.proto\x12\x13logmessager.auth.v1\"\xaf\x01\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x1d\n" +
-	"\n" +
-	"public_key\x18\x03 \x01(\fR\tpublicKey\"G\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\x122\n" +
+	"\x15encryption_public_key\x18\x03 \x01(\fR\x13encryptionPublicKey\x120\n" +
+	"\x14signature_public_key\x18\x04 \x01(\fR\x12signaturePublicKey\"G\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\"F\n" +
