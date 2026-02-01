@@ -42,14 +42,15 @@ type ChatRequestEvent struct {
 }
 
 type SessionStartedEvent struct {
-	SessionID     uuid.UUID
-	PeerID        uuid.UUID
-	PeerUsername  string
-	HostUserID    uuid.UUID
-	HostAddress   string
-	SessionToken  string
-	PeerPublicKey []byte
-	IsHost        bool
+	SessionID                uuid.UUID
+	PeerID                   uuid.UUID
+	PeerUsername             string
+	HostUserID               uuid.UUID
+	HostAddress              string
+	SessionToken             string
+	PeerEncryptionPublicKey  []byte
+	PeerSignaturePublicKey   []byte
+	IsHost                   bool
 }
 
 type SessionEndedEvent struct {
@@ -170,10 +171,22 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 		hostID = request.ToUserID
 		log.Info().Str("host", "responder").Msg("Responder will be host")
 	} else {
-		// Neither can accept inbound - fail
-		log.Warn().Msg("Neither user can accept inbound connections")
-		_ = s.sessionRepo.UpdateChatRequestStatus(ctx, requestID, "failed")
-		return nil, nil, ErrNoConnectionPath
+		// Both behind NAT - try hole punching
+		// Choose user with "better" NAT type as host
+		log.Warn().Msg("Both users behind NAT, attempting hole punching")
+		
+		// Prefer Full Cone NAT as host (easier to punch)
+		if initiatorPresence != nil && initiatorPresence.NatType == "Full Cone" {
+			hostID = request.FromUserID
+			log.Info().Str("host", "initiator").Msg("Using initiator as host for hole punching")
+		} else if responderPresence != nil {
+			hostID = request.ToUserID
+			log.Info().Str("host", "responder").Msg("Using responder as host for hole punching")
+		} else {
+			// Fallback: use initiator
+			hostID = request.FromUserID
+			log.Info().Str("host", "initiator").Msg("Using initiator as fallback host for hole punching")
+		}
 	}
 
 	// Create session
@@ -188,31 +201,31 @@ func (s *SessionService) AcceptChat(ctx context.Context, requestID uuid.UUID, ac
 	// Generate session token
 	sessionToken := generateSessionToken()
 
-	// Get user info and public keys
+	// Get user info
 	initiator, _ := s.userRepo.GetByID(ctx, request.FromUserID)
 	responder, _ := s.userRepo.GetByID(ctx, request.ToUserID)
-	initiatorKey, _ := s.userRepo.GetPublicKey(ctx, request.FromUserID)
-	responderKey, _ := s.userRepo.GetPublicKey(ctx, request.ToUserID)
 
 	// Prepare events for both users
 	initiatorEvent := &SessionStartedEvent{
-		SessionID:     session.ID,
-		PeerID:        responder.ID,
-		PeerUsername:  responder.Username,
-		HostUserID:    hostID,
-		SessionToken:  sessionToken,
-		PeerPublicKey: responderKey.PublicKey,
-		IsHost:        hostID == request.FromUserID,
+		SessionID:                session.ID,
+		PeerID:                   responder.ID,
+		PeerUsername:             responder.Username,
+		HostUserID:               hostID,
+		SessionToken:             sessionToken,
+		PeerEncryptionPublicKey:  responder.EncryptionPublicKey,
+		PeerSignaturePublicKey:   responder.SignaturePublicKey,
+		IsHost:                   hostID == request.FromUserID,
 	}
 
 	responderEvent := &SessionStartedEvent{
-		SessionID:     session.ID,
-		PeerID:        initiator.ID,
-		PeerUsername:  initiator.Username,
-		HostUserID:    hostID,
-		SessionToken:  sessionToken,
-		PeerPublicKey: initiatorKey.PublicKey,
-		IsHost:        hostID == request.ToUserID,
+		SessionID:                session.ID,
+		PeerID:                   initiator.ID,
+		PeerUsername:             initiator.Username,
+		HostUserID:               hostID,
+		SessionToken:             sessionToken,
+		PeerEncryptionPublicKey:  initiator.EncryptionPublicKey,
+		PeerSignaturePublicKey:   initiator.SignaturePublicKey,
+		IsHost:                   hostID == request.ToUserID,
 	}
 
 	// Notify initiator (user A who sent the request)
