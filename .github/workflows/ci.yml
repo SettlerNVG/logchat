@@ -75,12 +75,14 @@ jobs:
         with:
           working-directory: ./server
           version: latest
+          skip-cache: true
 
       - name: golangci-lint (client)
         uses: golangci/golangci-lint-action@v4
         with:
           working-directory: ./client
           version: latest
+          skip-cache: true
 
   build:
     name: Build
@@ -94,6 +96,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: false
 
       - name: Build server
         working-directory: ./server
