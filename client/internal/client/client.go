@@ -171,14 +171,8 @@ func (c *Client) Connect() error {
 		PermitWithoutStream: true,             // Send pings even without active streams
 	}))
 
-	// Add connection state monitoring
-	opts = append(opts, grpc.WithBlock()) // Wait for connection to be ready
-
-	// Create connection with timeout
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, c.cfg.Server.Address, opts...)
+	// Create connection
+	conn, err := grpc.NewClient(c.cfg.Server.Address, opts...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
