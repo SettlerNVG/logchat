@@ -10,6 +10,7 @@ require (
 	github.com/rs/zerolog v1.32.0
 	github.com/spf13/viper v1.18.2
 	golang.org/x/crypto v0.27.0
+	golang.org/x/time v0.5.0
 	google.golang.org/grpc v1.68.0
 )
 
