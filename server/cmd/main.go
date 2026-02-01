@@ -11,13 +11,16 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/logmessager/server/internal/auth"
 	"github.com/logmessager/server/internal/config"
 	grpcserver "github.com/logmessager/server/internal/grpc"
+	"github.com/logmessager/server/internal/ratelimit"
 	"github.com/logmessager/server/internal/repository"
 	"github.com/logmessager/server/internal/service"
+	tlsutil "github.com/logmessager/server/internal/tls"
 )
 
 func main() {
@@ -66,11 +69,44 @@ func main() {
 	// Initialize gRPC interceptor
 	authInterceptor := grpcserver.NewAuthInterceptor(authService)
 
-	// Create gRPC server
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(authInterceptor.Unary()),
-		grpc.StreamInterceptor(authInterceptor.Stream()),
+	// Initialize rate limiter
+	rateLimitCfg := ratelimit.DefaultConfig()
+	rateLimiter := ratelimit.NewManager(rateLimitCfg)
+	log.Info().Msg("Rate limiting enabled")
+
+	// Prepare gRPC server options
+	var opts []grpc.ServerOption
+
+	// Add TLS if enabled
+	if cfg.TLS.Enabled {
+		creds, err := tlsutil.LoadServerCredentials(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to load TLS credentials")
+		}
+		opts = append(opts, grpc.Creds(creds))
+		log.Info().
+			Str("cert", cfg.TLS.CertFile).
+			Str("key", cfg.TLS.KeyFile).
+			Msg("TLS enabled for gRPC server")
+	} else {
+		opts = append(opts, grpc.Creds(insecure.NewCredentials()))
+		log.Warn().Msg("TLS disabled - running in INSECURE mode!")
+	}
+
+	// Add interceptors (rate limiter first, then auth)
+	opts = append(opts,
+		grpc.ChainUnaryInterceptor(
+			rateLimiter.UnaryInterceptor(),
+			authInterceptor.Unary(),
+		),
+		grpc.ChainStreamInterceptor(
+			rateLimiter.StreamInterceptor(),
+			authInterceptor.Stream(),
+		),
 	)
+
+	// Create gRPC server
+	grpcServer := grpc.NewServer(opts...)
 
 	// Register services
 	grpcserver.RegisterAuthServer(grpcServer, authService)
